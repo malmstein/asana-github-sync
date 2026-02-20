@@ -27,13 +27,13 @@ cp env .tmp.env && printf '%s\n' "<overrides>" >> .tmp.env && npx @github/local-
 ## 1) find-asana-task-id
 
 ```bash
-cp env .tmp.env && printf '%s\n' "INPUT_ACTION=find-asana-task-id" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=find-asana-task-id" "INPUT_ASANA-PROJECT=" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
 ```
 
 ## 2) find-asana-task-ids
 
 ```bash
-cp env .tmp.env && printf '%s\n' "INPUT_ACTION=find-asana-task-ids" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=find-asana-task-ids" "INPUT_ASANA-PROJECT=" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
 ```
 
 ## 3) create-asana-task
@@ -81,19 +81,19 @@ cp env .tmp.env && printf '%s\n' "INPUT_ACTION=create-asana-issue-task" "GITHUB_
 ## 10) add-asana-comment
 
 ```bash
-cp env .tmp.env && printf '%s\n' "INPUT_ACTION=add-asana-comment" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=add-asana-comment" "INPUT_ASANA-PROJECT=" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
 ```
 
 ## 11) notify-pr-approved
 
 ```bash
-cp env .tmp.env && printf '%s\n' "INPUT_ACTION=notify-pr-approved" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=notify-pr-approved" "INPUT_ASANA-PROJECT="  "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
 ```
 
 ## 12) notify-pr-merged
 
 ```bash
-cp env .tmp.env && printf '%s\n' "INPUT_ACTION=notify-pr-merged" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=notify-pr-merged" "INPUT_ASANA-PROJECT="  "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
 ```
 
 ## 13) add-task-asana-project
@@ -119,5 +119,5 @@ cp env .tmp.env && printf '%s\n' "INPUT_ACTION=send-mattermost-message" >> .tmp.
 ## Quick smoke test (no external API calls)
 
 ```bash
-cp env .tmp.env && printf '%s\n' "INPUT_ACTION=find-asana-task-id" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=find-asana-task-id" "INPUT_ASANA-PROJECT=" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
 ```

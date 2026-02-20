@@ -487,6 +487,20 @@ async function findAsanaTaskIds(): Promise<void> {
   core.setOutput('asanaTaskIds', tasks.join(','))
 }
 
+function setAsanaTaskOutputs(taskIds: string[], actionName: string): void {
+  if (taskIds.length === 0) {
+    core.warning(`No Asana tasks found for action: ${actionName}`)
+    core.setOutput('asanaTaskFound', false)
+    core.setOutput('asanaTaskId', '')
+    core.setOutput('asanaTaskIds', '')
+    return
+  }
+
+  core.setOutput('asanaTaskFound', true)
+  core.setOutput('asanaTaskId', taskIds[0])
+  core.setOutput('asanaTaskIds', taskIds.join(','))
+}
+
 async function addCommentToPRTask(): Promise<void> {
   const client = buildAsanaClient()
   const pullRequest = github.context.payload.pull_request
@@ -499,6 +513,7 @@ async function addCommentToPRTask(): Promise<void> {
   for (const taskId of taskIds) {
     await createStory(client, taskId, `PR: ${prUrl}`, isPinned)
   }
+  setAsanaTaskOutputs(taskIds, 'add-asana-comment')
 }
 
 async function notifyPRApproved(): Promise<void> {
@@ -512,6 +527,7 @@ async function notifyPRApproved(): Promise<void> {
   for (const taskId of taskIds) {
     await createStory(client, taskId, `PR: ${prUrl} has been approved`, false)
   }
+  setAsanaTaskOutputs(taskIds, 'notify-pr-approved')
 }
 
 async function completePRTask(): Promise<void> {
@@ -520,6 +536,7 @@ async function completePRTask(): Promise<void> {
   for (const taskId of taskIds) {
     await completeAsanaTask(taskId, isComplete)
   }
+  setAsanaTaskOutputs(taskIds, 'notify-pr-merged')
 }
 
 async function addTaskToAsanaProject(): Promise<void> {

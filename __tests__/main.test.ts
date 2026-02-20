@@ -4,7 +4,13 @@ import * as core from '../__fixtures__/core.js'
 const githubRequest = jest.fn<
   (...args: unknown[]) => Promise<{ data: { body: string } }>
 >()
-const fetchMock = jest.fn()
+const fetchMock = jest.fn<
+  (url: string, init?: RequestInit) => Promise<{
+    ok: boolean
+    status: number
+    json: () => Promise<unknown>
+  }>
+>()
 
 const githubContext = {
   payload: {
@@ -249,6 +255,9 @@ describe('main.ts action router', () => {
     await run()
 
     expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskFound', true)
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskId', '222222')
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskIds', '222222')
   })
 
   it('notifies Asana task on PR approved', async () => {
@@ -260,6 +269,9 @@ describe('main.ts action router', () => {
     await run()
 
     expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskFound', true)
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskId', '222222')
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskIds', '222222')
   })
 
   it('notifies Asana task on PR merged', async () => {
@@ -271,6 +283,27 @@ describe('main.ts action router', () => {
 
     await run()
 
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskFound', true)
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskId', '222222')
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskIds', '222222')
+  })
+
+  it('outputs empty task info when no Asana task is found', async () => {
+    useInputs({
+      action: 'add-asana-comment',
+      'asana-project': '',
+      'trigger-phrase': 'Not present in PR body:'
+    })
+
+    await run()
+
+    expect(core.warning).toHaveBeenCalledWith(
+      'No Asana tasks found for action: add-asana-comment'
+    )
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskFound', false)
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskId', '')
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskIds', '')
     expect(core.setFailed).not.toHaveBeenCalled()
   })
 

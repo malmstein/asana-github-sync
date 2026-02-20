@@ -1,7 +1,7 @@
 {
   "pull_request": {
-    "html_url": "https://github.com/example/repo/pull/123",
-    "body": "Task/Issue URL: https://app.asana.com/0/111111/222222/f",
+    "html_url": "https://github.com/duckduckgo/Android/pull/7732",
+    "body": "Task/Issue URL: https://app.asana.com/1/137249556945/project/1174433894299346/task/1213329940926579?focus=true",
     "base": {
       "ref": "develop"
     },

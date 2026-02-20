@@ -104,6 +104,8 @@ outputs:
     description: First Asana task ID found or matched
   asanaTaskIds:
     description: Comma-separated Asana task IDs found or matched
+  asanaTaskFound:
+    description: Whether any Asana task IDs were found for the action
   asanaTaskPermalink:
     description: Asana permalink URL for provided task ID
 
