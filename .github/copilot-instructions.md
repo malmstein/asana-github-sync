@@ -22,7 +22,7 @@ it is generated from.
 | `badges/`            | Badges for readme                                        |
 | `dist/`              | Generated JavaScript Code                                |
 | `src/`               | TypeScript Source Code                                   |
-| `.env.example`       | Environment Variables Example for `@github/local-action` |
+| `env`                | Environment variables for `@github/local-action`          |
 | `.licensed.yml`      | Licensed Configuration                                   |
 | `.markdown-lint.yml` | Markdown Linter Configuration                            |
 | `.node-version`      | Node.js Version Configuration                            |

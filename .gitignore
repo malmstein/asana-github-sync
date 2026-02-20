@@ -68,6 +68,8 @@ typings/
 # dotenv environment variables file
 .env
 .env.test
+# Local-action env file (may contain secrets; use env.example as template if needed)
+env
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
