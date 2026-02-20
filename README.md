@@ -1,305 +1,270 @@
-# Create a GitHub Action Using TypeScript
+# Github-Asana action
 
-![Linter](https://github.com/actions/typescript-action/actions/workflows/linter.yml/badge.svg)
-![CI](https://github.com/actions/typescript-action/actions/workflows/ci.yml/badge.svg)
-![Check dist/](https://github.com/actions/typescript-action/actions/workflows/check-dist.yml/badge.svg)
-![CodeQL](https://github.com/actions/typescript-action/actions/workflows/codeql-analysis.yml/badge.svg)
-![Coverage](./badges/coverage.svg)
+This action integrates Asana with GitHub workflows.
 
-Use this template to bootstrap the creation of a TypeScript action. :rocket:
+## Prerequisites
 
-This template includes compilation support, tests, a validation workflow,
-publishing, and versioning guidance.
+- Asana account with access to the project(s) you want to update.
+- Asana personal access token.
+- For PR-based actions, a pull request body that includes Asana task URL(s).
 
-If you are new, there's also a simpler introduction in the
-[Hello world JavaScript action repository](https://github.com/actions/hello-world-javascript-action).
+## Required inputs
 
-## Create Your Own Action
+### `action`
 
-To create your own action, you can use this repository as a template! Just
-follow the below instructions:
+Required. Action to run:
 
-1. Click the **Use this template** button at the top of the repository
-1. Select **Create a new repository**
-1. Select an owner and name for your new repository
-1. Click **Create repository**
-1. Clone your new repository
+- `create-asana-task`
+- `post-comment-asana-task`
+- `get-asana-task-permalink`
+- `mark-asana-task-complete`
+- `assign-asana-task`
+- `search-asana-task-by-name`
+- `create-asana-issue-task`
+- `find-asana-task-id`
+- `find-asana-task-ids`
+- `add-asana-comment`
+- `notify-pr-approved`
+- `notify-pr-merged`
+- `add-task-asana-project`
+- `add-task-pr-description`
+- `send-mattermost-message`
 
-> [!IMPORTANT]
->
-> Make sure to remove or update the [`CODEOWNERS`](./CODEOWNERS) file! For
-> details on how to use this file, see
-> [About code owners](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
+### `asana-pat`
 
-## Initial Setup
+Required for all Asana API actions.
 
-After you've cloned the repository to your local machine or codespace, you'll
-need to perform some initial setup steps before you can develop your action.
+## Install, test, and package for distribution
 
-> [!NOTE]
->
-> You'll need to have a reasonably modern version of
-> [Node.js](https://nodejs.org) handy (20.x or later should work!). If you are
-> using a version manager like [`nodenv`](https://github.com/nodenv/nodenv) or
-> [`fnm`](https://github.com/Schniz/fnm), this template has a `.node-version`
-> file at the root of the repository that can be used to automatically switch to
-> the correct version when you `cd` into the repository. Additionally, this
-> `.node-version` file is used by GitHub Actions in any `actions/setup-node`
-> actions.
+### Install
 
-1. :hammer_and_wrench: Install the dependencies
+```bash
+npm install
+```
 
-   ```bash
-   npm install
-   ```
+### Test
 
-1. :building_construction: Package the TypeScript for distribution
+```bash
+npm test
+```
 
-   ```bash
-   npm run bundle
-   ```
+Run the complete local validation sequence:
 
-1. :white_check_mark: Run the tests
+```bash
+npm run all
+```
 
-   ```bash
-   $ npm test
+### Package for distribution
 
-   PASS  ./index.test.js
-     ✓ throws invalid number (3ms)
-     ✓ wait 500 ms (504ms)
-     ✓ test runs (95ms)
+Build bundled output in `dist/`:
 
-   ...
-   ```
+```bash
+npm run package
+```
 
-## Update the Action Metadata
+Or run format + package:
 
-The [`action.yml`](action.yml) file defines metadata about your action, such as
-input(s) and output(s). For details about this file, see
-[Metadata syntax for GitHub Actions](https://docs.github.com/en/actions/creating-actions/metadata-syntax-for-github-actions).
+```bash
+npm run bundle
+```
 
-When you copy this repository, update `action.yml` with the name, description,
-inputs, and outputs for your action.
+The action runs from `dist/index.js` in workflows, so packaging is required
+before publishing.
 
-## Update the Action Code
+## Local testing
 
-The [`src/`](./src/) directory is the heart of your action! This contains the
-source code that will be run when your action is invoked. You can replace the
-contents of this directory with your own code.
+```bash
+npx @github/local-action . src/main.ts env
+```
 
-There are a few things to keep in mind when writing your action code:
+`env` is gitignored and should contain local test-only values.
 
-- Most GitHub Actions toolkit and CI/CD operations are processed asynchronously.
-  In `main.ts`, you will see that the action is run in an `async` function.
+## Actions
 
-  ```javascript
-  import * as core from '@actions/core'
-  //...
+### Create Asana task
 
-  async function run() {
-    try {
-      //...
-    } catch (error) {
-      core.setFailed(error.message)
-    }
-  }
-  ```
+Creates an Asana task from explicit input values.
 
-  For more information about the GitHub Actions toolkit, see the
-  [documentation](https://github.com/actions/toolkit/blob/main/README.md).
+Required inputs:
 
-So, what are you waiting for? Go ahead and start customizing your action!
+- `asana-project`
+- `asana-task-name`
+- `asana-task-description`
 
-1. Create a new branch
+Optional inputs:
 
-   ```bash
-   git checkout -b releases/v1
-   ```
+- `asana-section`
+- `asana-tags`
+- `asana-collaborators`
+- `asana-assignee` or `asana-task-assignee`
+- `asana-task-custom-fields`
 
-1. Replace the contents of `src/` with your action code
-1. Add tests to `__tests__/` for your source code
-1. Format, test, and build the action
-
-   ```bash
-   npm run all
-   ```
-
-   > This step is important! It will run [`rollup`](https://rollupjs.org/) to
-   > build the final JavaScript action code with all dependencies included. If
-   > you do not run this step, your action will not work correctly when it is
-   > used in a workflow.
-
-1. (Optional) Test your action locally
-
-   The [`@github/local-action`](https://github.com/github/local-action) utility
-   can be used to test your action locally. It is a simple command-line tool
-   that "stubs" (or simulates) the GitHub Actions Toolkit. This way, you can run
-   your TypeScript action locally without having to commit and push your changes
-   to a repository.
-
-   The `local-action` utility can be run in the following ways:
-   - Visual Studio Code Debugger
-
-     Make sure to review and, if needed, update
-     [`.vscode/launch.json`](./.vscode/launch.json)
-
-   - Terminal/Command Prompt
-
-     ```bash
-     # npx @github/local action <action-yaml-path> <entrypoint> <dotenv-file>
-     npx @github/local-action . src/main.ts .env
-     ```
-
-   You can provide a `.env` file to the `local-action` CLI to set environment
-   variables used by the GitHub Actions Toolkit. For example, setting inputs and
-   event payload data used by your action. For more information, see the example
-   file, [`.env.example`](./.env.example), and the
-   [GitHub Actions Documentation](https://docs.github.com/en/actions/learn-github-actions/variables#default-environment-variables).
-
-1. Commit your changes
-
-   ```bash
-   git add .
-   git commit -m "My first action is ready!"
-   ```
-
-1. Push them to your repository
-
-   ```bash
-   git push -u origin releases/v1
-   ```
-
-1. Create a pull request and get feedback on your action
-1. Merge the pull request into the `main` branch
-
-Your action is now published! :rocket:
-
-For information about versioning your action, see
-[Versioning](https://github.com/actions/toolkit/blob/main/docs/action-versioning.md)
-in the GitHub Actions toolkit.
-
-## Validate the Action
-
-You can now validate the action by referencing it in a workflow file. For
-example, [`ci.yml`](./.github/workflows/ci.yml) demonstrates how to reference an
-action in the same repository.
+#### Example usage
 
 ```yaml
 steps:
-  - name: Checkout
-    id: checkout
-    uses: actions/checkout@v4
-
-  - name: Test Local Action
-    id: test-action
-    uses: ./
+  - uses: <owner>/asana-github-sync@v1
     with:
-      milliseconds: 1000
-
-  - name: Print Output
-    id: output
-    run: echo "${{ steps.test-action.outputs.time }}"
+      action: create-asana-task
+      asana-pat: ${{ secrets.ASANA_ACCESS_TOKEN }}
+      asana-project: '123456789'
+      asana-task-name: 'Release preparation'
+      asana-task-description: 'Finalize changelog and checklist'
 ```
 
-For example workflow runs, check out the
-[Actions tab](https://github.com/actions/typescript-action/actions)! :rocket:
+### Post comment in Asana task
 
-## Usage
+Posts a comment to one or more task IDs.
 
-After testing, you can create version tag(s) that developers can use to
-reference different stable versions of your action. For more information, see
-[Versioning](https://github.com/actions/toolkit/blob/main/docs/action-versioning.md)
-in the GitHub Actions toolkit.
+Required inputs:
 
-To include the action in a workflow in another repository, you can use the
-`uses` syntax with the `@` symbol to reference a specific branch, tag, or commit
-hash.
+- `asana-task-id`
+- `asana-task-comment`
 
-```yaml
-steps:
-  - name: Checkout
-    id: checkout
-    uses: actions/checkout@v4
+Optional inputs:
 
-  - name: Test Local Action
-    id: test-action
-    uses: actions/typescript-action@v1 # Commit with the `v1` tag
-    with:
-      milliseconds: 1000
+- `asana-task-comment-pinned`
+- `asana-task-comment-is-html`
 
-  - name: Print Output
-    id: output
-    run: echo "${{ steps.test-action.outputs.time }}"
-```
+### Get Asana task permalink
 
-## Publishing a New Release
+Returns permalink for a task.
 
-This project includes a helper script, [`script/release`](./script/release)
-designed to streamline the process of tagging and pushing new releases for
-GitHub Actions.
+Required inputs:
 
-GitHub Actions allows users to select a specific version of the action to use,
-based on release tags. This script simplifies this process by performing the
-following steps:
+- `asana-task-id`
 
-1. **Retrieving the latest release tag:** The script starts by fetching the most
-   recent SemVer release tag of the current branch, by looking at the local data
-   available in your repository.
-1. **Prompting for a new release tag:** The user is then prompted to enter a new
-   release tag. To assist with this, the script displays the tag retrieved in
-   the previous step, and validates the format of the inputted tag (vX.X.X). The
-   user is also reminded to update the version field in package.json.
-1. **Tagging the new release:** The script then tags a new release and syncs the
-   separate major tag (e.g. v1, v2) with the new release tag (e.g. v1.0.0,
-   v2.1.2). When the user is creating a new major release, the script
-   auto-detects this and creates a `releases/v#` branch for the previous major
-   version.
-1. **Pushing changes to remote:** Finally, the script pushes the necessary
-   commits, tags and branches to the remote repository. From here, you will need
-   to create a new release in GitHub so users can easily reference the new tags
-   in their workflows.
+### Mark Asana task complete/incomplete
 
-## Dependency License Management
+Updates completion status for a task.
 
-This template includes a GitHub Actions workflow,
-[`licensed.yml`](./.github/workflows/licensed.yml), that uses
-[Licensed](https://github.com/licensee/licensed) to check for dependencies with
-missing or non-compliant licenses. This workflow is initially disabled. To
-enable the workflow, follow the below steps.
+Required inputs:
 
-1. Open [`licensed.yml`](./.github/workflows/licensed.yml)
-1. Uncomment the following lines:
+- `asana-task-id`
 
-   ```yaml
-   # pull_request:
-   #   branches:
-   #     - main
-   # push:
-   #   branches:
-   #     - main
-   ```
+Optional inputs:
 
-1. Save and commit the changes
+- `is-complete`
 
-Once complete, this workflow will run any time a pull request is created or
-changes pushed directly to `main`. If the workflow detects any dependencies with
-missing or non-compliant licenses, it will fail the workflow and provide details
-on the issue(s) found.
+### Assign Asana task
 
-### Updating Licenses
+Assigns a task to a user.
 
-Whenever you install or update dependencies, you can use the Licensed CLI to
-update the licenses database. To install Licensed, see the project's
-[Readme](https://github.com/licensee/licensed?tab=readme-ov-file#installation).
+Required inputs:
 
-To update the cached licenses, run the following command:
+- `asana-task-id`
+- `asana-assignee`
 
-```bash
-licensed cache
-```
+### Search Asana task by name
 
-To check the status of cached licenses, run the following command:
+Searches tasks by exact name in a project, optionally section-scoped.
 
-```bash
-licensed status
-```
+Required inputs:
+
+- `asana-task-name`
+- `asana-project`
+
+Optional inputs:
+
+- `asana-section`
+
+### Create Asana task from GitHub issue
+
+Creates an Asana task from issue title/body and appends issue URL as task story.
+
+Required inputs:
+
+- `asana-project`
+
+### Find Asana task ID(s) in PR description
+
+Scans PR body for Asana URL(s).
+
+Supported actions:
+
+- `find-asana-task-id`
+- `find-asana-task-ids`
+
+Optional inputs:
+
+- `trigger-phrase`
+- `asana-project` (project filter)
+
+### Add PR link to Asana task(s)
+
+Finds task(s) from PR body and adds PR URL comment.
+
+Action: `add-asana-comment`
+
+Optional inputs:
+
+- `trigger-phrase`
+- `is-pinned`
+
+### Notify Asana on PR approved
+
+Action: `notify-pr-approved`
+
+Optional inputs:
+
+- `trigger-phrase`
+- `asana-project`
+
+### Notify Asana on PR merged
+
+Action: `notify-pr-merged`
+
+Optional inputs:
+
+- `trigger-phrase`
+- `asana-project`
+- `is-complete`
+
+### Add task(s) to Asana project/section
+
+Action: `add-task-asana-project`
+
+Required inputs:
+
+- `asana-project`
+
+Optional inputs:
+
+- `asana-section`
+- `asana-task-id` (if omitted, action parses PR body)
+
+### Add Asana task URL to PR description
+
+Action: `add-task-pr-description`
+
+Required inputs:
+
+- `github-pat`
+- `github-org`
+- `github-repository`
+- `github-pr`
+- `asana-project`
+- `asana-task-id`
+
+### Send Mattermost message
+
+Action: `send-mattermost-message`
+
+Required inputs:
+
+- `mattermost-token`
+- `mattermost-team-id`
+- `mattermost-channel-name`
+- `mattermost-message`
+
+Optional inputs:
+
+- `mattermost-url` (defaults to `https://chat.duckduckgo.com`)
+
+## Outputs
+
+- `taskId`
+- `duplicate`
+- `asanaTaskId`
+- `asanaTaskIds`
+- `asanaTaskPermalink`
