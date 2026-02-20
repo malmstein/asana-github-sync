@@ -66,8 +66,9 @@ function buildAsanaClient(): AsanaClient {
     })
 
     if (!response.ok) {
+      const errorBody = await response.text().catch(() => '')
       throw new Error(
-        `Asana API request failed (${response.status}) for ${path}`
+        `Asana API request failed (${response.status}) for ${path}${errorBody ? `: ${errorBody}` : ''}`
       )
     }
 
@@ -280,10 +281,22 @@ async function createStory(
   isPinned: boolean,
   isHtml = false
 ): Promise<void> {
-  const body = isHtml
-    ? { data: { is_pinned: isPinned, html_text: text } }
-    : { data: { is_pinned: isPinned, text } }
-  await client.stories.createStoryForTask(body, taskId, {})
+  const storyData = isHtml ? { html_text: text } : { text }
+  const body = { data: { ...storyData, is_pinned: isPinned } }
+
+  try {
+    await client.stories.createStoryForTask(body, taskId, {})
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!isPinned || !message.includes('(400)')) {
+      throw error
+    }
+
+    core.warning(
+      `Asana rejected pinned comment for task ${taskId}; retrying without pinning`
+    )
+    await client.stories.createStoryForTask({ data: storyData }, taskId, {})
+  }
 }
 
 async function addTaskToProject(
