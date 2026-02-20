@@ -1,23 +1,111 @@
-name: The name of your action here
-description: Provide a description here
-author: Your name or organization here
+name: Asana GitHub Sync
+description: Common integrations between GitHub and Asana
+author: asana-github-sync
 
 # Add your action's branding here. This will appear on the GitHub Marketplace.
 branding:
-  icon: heart
-  color: red
+  icon: check-square
+  color: yellow
 
 # Define your inputs here.
 inputs:
-  milliseconds:
-    description: Your input description here
+  action:
+    description: Action to execute
     required: true
-    default: '1000'
+  asana-pat:
+    description: Asana personal access token
+    required: false
+  asana-project:
+    description: Asana project ID
+    required: false
+  asana-section:
+    description: Asana section ID
+    required: false
+  asana-task-name:
+    description: Asana task name
+    required: false
+  asana-task-id:
+    description: Asana task ID or comma-separated task IDs
+    required: false
+  asana-task-description:
+    description: Asana task description
+    required: false
+  asana-task-comment:
+    description: Comment to add to Asana task
+    required: false
+  asana-task-comment-pinned:
+    description: Whether the task comment should be pinned (true or false)
+    required: false
+  asana-task-comment-is-html:
+    description: Whether the task comment is HTML (true or false)
+    required: false
+  asana-tags:
+    description: Comma-separated Asana tag IDs
+    required: false
+  asana-collaborators:
+    description: Comma-separated Asana collaborator IDs
+    required: false
+  asana-assignee:
+    description: Asana assignee user ID
+    required: false
+  asana-task-assignee:
+    description: Asana assignee user ID (alias)
+    required: false
+  asana-task-custom-fields:
+    description: JSON object of custom fields for task creation
+    required: false
+  trigger-phrase:
+    description: Prefix phrase used to locate Asana URLs in PR body
+    required: false
+  is-complete:
+    description: Mark tasks complete when true, incomplete when false
+    required: false
+  is-pinned:
+    description: Pin created comments when true
+    required: false
+  github-pat:
+    description: GitHub personal access token
+    required: false
+  github-repository:
+    description: GitHub repository name for API calls
+    required: false
+  github-org:
+    description: GitHub organization/owner for API calls
+    required: false
+  github-username:
+    description: GitHub username
+    required: false
+  github-pr:
+    description: Pull request number
+    required: false
+  mattermost-url:
+    description: Mattermost server base URL
+    required: false
+  mattermost-token:
+    description: Mattermost access token
+    required: false
+  mattermost-team-id:
+    description: Mattermost team ID
+    required: false
+  mattermost-channel-name:
+    description: Mattermost channel name
+    required: false
+  mattermost-message:
+    description: Mattermost message content
+    required: false
 
 # Define your outputs here.
 outputs:
-  time:
-    description: Your output description here
+  taskId:
+    description: Asana task ID for created or found task
+  duplicate:
+    description: Whether create-asana-task found an existing task in section
+  asanaTaskId:
+    description: First Asana task ID found or matched
+  asanaTaskIds:
+    description: Comma-separated Asana task IDs found or matched
+  asanaTaskPermalink:
+    description: Asana permalink URL for provided task ID
 
 runs:
   using: node24
