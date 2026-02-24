@@ -68,12 +68,12 @@ describe('local-action', () => {
           action: 'pr-asana-sync',
           envLines: [
             `INPUT_ASANA-PAT=${asanaPat}`,
+            `INPUT_GITHUB-PAT=${githubPat}`,
             `INPUT_ASANA-PROJECT=${asanaProjectId}`,
             `INPUT_ASANA-WORKSPACE-ID=${asanaWorkspaceId}`,
-            'INPUT_USER-MAP={"author":"asana-author","reviewer":"asana-reviewer"}',
             'INPUT_RANDOMIZED-REVIEWERS=reviewer',
             'GITHUB_EVENT_NAME=pull_request',
-            'GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json'
+            'GITHUB_EVENT_PATH=__fixtures__/events/pull_request_opened.json'
           ]
         },
         {

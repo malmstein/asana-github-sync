@@ -87,9 +87,6 @@ inputs:
   asana-in-progress-section-id:
     description: Asana section ID used when review changes are requested
     required: false
-  user-map:
-    description: JSON mapping from GitHub username to Asana user ID
-    required: false
   randomized-reviewers:
     description: Comma-separated GitHub users eligible as fallback reviewer
     required: false
@@ -133,6 +130,8 @@ outputs:
     description: Asana URL for the PR sync task
   result:
     description: Result of PR sync action (created, updated, skipped)
+  asanaUserId:
+    description: Asana user ID resolved from GitHub username mapping
 
 runs:
   using: node24

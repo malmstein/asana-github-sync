@@ -325,6 +325,10 @@ type PrUser = {
 
 type PrPayload = {
   action?: string
+  review?: {
+    state?: string
+    user?: PrUser
+  }
   pull_request?: {
     number?: number
     html_url?: string
@@ -346,6 +350,15 @@ type PrSyncCustomFields = {
   status: AsanaCustomField
 }
 
+const GITHUB_ASANA_USER_MAP = {
+  owner: 'duckduckgo',
+  repo: 'internal-github-asana-utils',
+  path: 'user_map.yml'
+} as const
+
+let cachedGithubAsanaUserMap: Record<string, string> | null = null
+let cachedGithubAsanaUserMapToken = ''
+
 const PR_SYNC_CUSTOM_FIELDS = {
   url: 'Github URL',
   status: 'Github Status'
@@ -358,6 +371,7 @@ const PR_SYNC_PULL_REQUEST_ACTIONS = new Set([
   'reopened',
   'synchronize',
   'assigned',
+  'unassigned',
   'ready_for_review',
   'labeled',
   'submitted',
@@ -380,24 +394,111 @@ function getDueOn(workingDays: number): string {
   return date.toISOString().split('T')[0]
 }
 
-function parseUserMapInput(): Record<string, string> {
-  const raw = core.getInput('user-map')
-  if (!raw) return {}
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('user-map must be a JSON object')
+function parseGithubAsanaUserMap(rawYaml: string): Record<string, string> {
+  const userMap: Record<string, string> = {}
+  for (const rawLine of rawYaml.split('\n')) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) continue
+    const separator = line.indexOf(':')
+    if (separator < 1) continue
+
+    const githubUsername = line
+      .slice(0, separator)
+      .trim()
+      .replace(/^['"]|['"]$/g, '')
+    const asanaUserId = line
+      .slice(separator + 1)
+      .trim()
+      .replace(/\s+#.*$/, '')
+      .trim()
+      .replace(/^['"]|['"]$/g, '')
+    if (githubUsername && asanaUserId) {
+      userMap[githubUsername] = asanaUserId
     }
-    const output: Record<string, string> = {}
-    for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === 'string' && value.trim() !== '') {
-        output[key] = value
+  }
+  return userMap
+}
+
+async function loadGithubAsanaUserMap(
+  githubPat: string
+): Promise<Record<string, string>> {
+  if (cachedGithubAsanaUserMap && cachedGithubAsanaUserMapToken === githubPat) {
+    return cachedGithubAsanaUserMap
+  }
+
+  const githubClient = buildGithubClient(githubPat)
+  const response = (await githubClient.request(
+    'GET /repos/{owner}/{repo}/contents/{path}',
+    {
+      owner: GITHUB_ASANA_USER_MAP.owner,
+      repo: GITHUB_ASANA_USER_MAP.repo,
+      path: GITHUB_ASANA_USER_MAP.path,
+      headers: {
+        'X-GitHub-Api-Version': '2022-11-28',
+        Accept: 'application/vnd.github.raw+json'
       }
     }
-    return output
-  } catch {
-    throw new Error('Invalid JSON in input user-map')
+  )) as { data: unknown }
+
+  let rawYaml = ''
+  if (typeof response.data === 'string') {
+    rawYaml = response.data
+  } else if (
+    response.data &&
+    typeof response.data === 'object' &&
+    'content' in response.data &&
+    typeof (response.data as { content?: unknown }).content === 'string'
+  ) {
+    const encoded = ((response.data as { content: string }).content ?? '').replace(
+      /\n/g,
+      ''
+    )
+    rawYaml = Buffer.from(encoded, 'base64').toString('utf8')
+  } else {
+    throw new Error('Unable to read GitHub-Asana user map content')
   }
+
+  const parsed = parseGithubAsanaUserMap(rawYaml)
+  cachedGithubAsanaUserMap = parsed
+  cachedGithubAsanaUserMapToken = githubPat
+  return parsed
+}
+
+async function resolveAsanaUserIdFromGithubUsername(
+  githubUsername: string,
+  options: { requireGithubPat?: boolean; failIfMissing?: boolean } = {}
+): Promise<string | undefined> {
+  const githubPat = core.getInput('github-pat')
+  if (!githubPat) {
+    if (options.requireGithubPat) {
+      throw new Error('Input required and not supplied: github-pat')
+    }
+    core.info('pr-asana-sync: github-pat not provided, skipping user id lookup')
+    return undefined
+  }
+
+  let userMap: Record<string, string>
+  try {
+    userMap = await loadGithubAsanaUserMap(githubPat)
+  } catch (error) {
+    if (options.requireGithubPat) throw error
+    core.warning(
+      `pr-asana-sync: failed loading GitHub-Asana user map: ${error instanceof Error ? error.message : String(error)}`
+    )
+    return undefined
+  }
+
+  const asanaUserId = userMap[githubUsername]
+  if (!asanaUserId) {
+    if (options.failIfMissing) {
+      throw new Error(`User ${githubUsername} not found in GitHub-Asana user map`)
+    }
+    core.info(
+      `pr-asana-sync: no Asana user mapping found for GitHub user ${githubUsername}`
+    )
+    return undefined
+  }
+  return asanaUserId
 }
 
 function getPrState(pr: NonNullable<PrPayload['pull_request']>): PrState {
@@ -407,6 +508,33 @@ function getPrState(pr: NonNullable<PrPayload['pull_request']>): PrState {
     return 'Open'
   }
   return 'Closed'
+}
+
+function getPrSyncStatusName(
+  action: string,
+  reviewState: string | undefined,
+  prState: PrState
+): string {
+  void action
+  void reviewState
+  return prState
+}
+
+function getApprovalStatusFromReview(
+  action: string,
+  reviewState: string | undefined
+): 'approved' | 'changes_requested' | undefined {
+  if (action !== 'submitted') return undefined
+  if (reviewState === 'approved') return 'approved'
+  if (reviewState === 'changes_requested') return 'changes_requested'
+  return undefined
+}
+
+function getApprovalStatusFromPrState(
+  prState: PrState
+): 'rejected' | undefined {
+  if (prState === 'Closed') return 'rejected'
+  return undefined
 }
 
 function getParentTaskIdFromPrBody(body: string): string | null {
@@ -445,14 +573,23 @@ async function findPrTask(
   prUrl: string,
   customFields: PrSyncCustomFields
 ): Promise<AsanaTask | null> {
+  core.info('pr-asana-sync: searching workspace for existing task by PR URL')
   const search = await client.tasks.searchTasksInWorkspace(workspaceId, {
     [`custom_fields.${customFields.url.gid}.value`]: prUrl,
     opt_fields: 'name,permalink_url,completed,projects,custom_fields'
   })
   const searchedTasks = Array.isArray(search.data) ? search.data : []
   const searchedTask = searchedTasks[0]
-  if (searchedTask) return searchedTask
+  if (searchedTask) {
+    core.info(
+      `pr-asana-sync: found existing task via workspace search (${searchedTask.gid})`
+    )
+    return searchedTask
+  }
 
+  core.info(
+    'pr-asana-sync: workspace search had no match, scanning project task list'
+  )
   const projectTasks = await client.tasks.getTasksForProject(
     projectId,
     'name,permalink_url,completed,projects,custom_fields'
@@ -460,13 +597,20 @@ async function findPrTask(
   const projectTaskList = Array.isArray(projectTasks.data)
     ? projectTasks.data
     : []
+  core.info(
+    `pr-asana-sync: scanning ${projectTaskList.length} project tasks for URL match`
+  )
   for (const task of projectTaskList) {
     for (const field of task.custom_fields ?? []) {
       if (field.gid === customFields.url.gid && field.display_value === prUrl) {
+        core.info(
+          `pr-asana-sync: found existing task via project scan (${task.gid})`
+        )
         return task
       }
     }
   }
+  core.info('pr-asana-sync: no existing task found')
   return null
 }
 
@@ -558,14 +702,12 @@ async function resolvePrAssigneeLogin(
 }
 
 function shouldSkipPrSync(
-  author: string,
-  userMap: Record<string, string>
+  author: string
 ): boolean {
   const skippedUsers = new Set(
     getArrayFromInput(core.getInput('skipped-users'))
   )
   if (skippedUsers.has(author)) return true
-  if (Object.keys(userMap).length > 0 && !userMap[author]) return true
   return false
 }
 
@@ -584,6 +726,7 @@ function shouldClosePrTask(
 async function prAsanaSync(): Promise<void> {
   const payload = github.context.payload as PrPayload
   const action = payload.action ?? ''
+  core.info(`pr-asana-sync: received event action "${action}"`)
   if (!PR_SYNC_PULL_REQUEST_ACTIONS.has(action)) {
     core.info(`Skipping pr-asana-sync for pull_request action "${action}"`)
     core.setOutput('result', 'skipped')
@@ -592,23 +735,37 @@ async function prAsanaSync(): Promise<void> {
 
   const pr = payload.pull_request
   if (!pr) throw new Error('Pull request payload is required for pr-asana-sync')
+  core.info(`pr-asana-sync: processing PR #${pr.number ?? 'unknown'}`)
 
   const workspaceId = core.getInput('asana-workspace-id', { required: true })
   const projectId = core.getInput('asana-project', { required: true })
+  core.info(
+    `pr-asana-sync: loaded required inputs (workspace=${workspaceId}, project=${projectId})`
+  )
   const client = buildAsanaClient()
+  core.info('pr-asana-sync: loading required Asana custom fields')
   const customFields = await findPrSyncCustomFields(client, workspaceId)
   const prUrl = ensureString(pr.html_url, 'Pull request URL is required')
   const prState = getPrState(pr)
+  const statusName = getPrSyncStatusName(action, payload.review?.state, prState)
+  const approvalStatus =
+    getApprovalStatusFromReview(action, payload.review?.state) ??
+    getApprovalStatusFromPrState(prState)
+  core.info(`pr-asana-sync: derived PR state "${prState}"`)
+  core.info(`pr-asana-sync: resolved status name "${statusName}"`)
+  core.info(
+    `pr-asana-sync: resolved approval status "${approvalStatus ?? 'unchanged'}"`
+  )
   const statusGid =
-    customFields.status.enum_options?.find((opt) => opt.name === prState)
+    customFields.status.enum_options?.find((opt) => opt.name === statusName)
       ?.gid ?? ''
   if (!statusGid) {
-    throw new Error(`No enum option found for Github Status "${prState}"`)
+    throw new Error(`No enum option found for Github Status "${statusName}"`)
   }
+  core.info(`pr-asana-sync: resolved status option gid ${statusGid}`)
 
-  const userMap = parseUserMapInput()
   const author = ensureString(pr.user?.login, 'Pull request author is required')
-  if (shouldSkipPrSync(author, userMap)) {
+  if (shouldSkipPrSync(author)) {
     core.info(`Skipping Asana sync for pull request author: ${author}`)
     core.setOutput('result', 'skipped')
     core.setOutput('task-url', '')
@@ -617,9 +774,14 @@ async function prAsanaSync(): Promise<void> {
 
   const title = buildPrTaskName(pr)
   const notes = buildPrTaskNotes(pr)
-  const followers = userMap[author] ? [userMap[author]] : undefined
+  const authorAsanaUserId = await resolveAsanaUserIdFromGithubUsername(author)
+  const followers = authorAsanaUserId ? [authorAsanaUserId] : undefined
   const parentTaskId = getParentTaskIdFromPrBody(pr.body ?? '')
+  core.info(
+    `pr-asana-sync: parent task in PR body ${parentTaskId ? `found (${parentTaskId})` : 'not found'}`
+  )
 
+  core.info('pr-asana-sync: finding existing PR task')
   let task = await findPrTask(
     client,
     workspaceId,
@@ -628,6 +790,7 @@ async function prAsanaSync(): Promise<void> {
     customFields
   )
   if (!task) {
+    core.info('pr-asana-sync: creating new PR task')
     const createData: Record<string, unknown> = {
       resource_subtype: 'approval',
       custom_fields: {
@@ -641,6 +804,7 @@ async function prAsanaSync(): Promise<void> {
     if (parentTaskId) createData.parent = parentTaskId
     if (followers && followers.length > 0) createData.followers = followers
     if (!pr.draft) createData.due_on = getDueOn(1)
+    if (approvalStatus) createData.approval_status = approvalStatus
 
     const created = await client.tasks.createTask({ data: createData }, {})
     const taskId = ensureString(
@@ -649,13 +813,29 @@ async function prAsanaSync(): Promise<void> {
     )
     task = created.data ?? { gid: taskId }
     core.setOutput('result', 'created')
+    core.info(`pr-asana-sync: created task ${task.gid}`)
   } else {
     core.setOutput('result', 'updated')
+    core.info(`pr-asana-sync: updating existing task ${task.gid}`)
   }
 
   const reviewerPool = getArrayFromInput(core.getInput('randomized-reviewers'))
-  const assigneeLogin = await resolvePrAssigneeLogin(pr, reviewerPool)
-  const assignee = assigneeLogin ? userMap[assigneeLogin] : undefined
+  core.info(
+    `pr-asana-sync: reviewer pool contains ${reviewerPool.length} users`
+  )
+  let assigneeLogin: string | undefined
+  let assignee: string | null | undefined
+  if (action === 'unassigned') {
+    assignee = null
+  } else {
+    assigneeLogin = await resolvePrAssigneeLogin(pr, reviewerPool)
+    assignee = assigneeLogin
+      ? await resolveAsanaUserIdFromGithubUsername(assigneeLogin)
+      : undefined
+  }
+  core.info(
+    `pr-asana-sync: assignee resolution -> login=${assigneeLogin ?? 'none'}, asana=${assignee ?? 'none'}`
+  )
 
   const updateData: Record<string, unknown> = {
     custom_fields: {
@@ -665,30 +845,81 @@ async function prAsanaSync(): Promise<void> {
     name: title,
     notes
   }
-  if (assignee) updateData.assignee = assignee
+  if (assignee === null) {
+    updateData.assignee = null
+  } else if (assignee) {
+    updateData.assignee = assignee
+  }
   if (action === 'ready_for_review') {
     updateData.due_on = getDueOn(1)
+  }
+  if (approvalStatus) {
+    updateData.approval_status = approvalStatus
   }
 
   const noAutocloseProjects = new Set(
     getArrayFromInput(core.getInput('no-autoclose-projects'))
   )
-  if (shouldClosePrTask(prState, task, noAutocloseProjects)) {
+  const shouldClose = shouldClosePrTask(prState, task, noAutocloseProjects)
+  core.info(`pr-asana-sync: should mark task complete = ${String(shouldClose)}`)
+  if (shouldClose) {
     updateData.completed = true
   }
 
   const sectionId = core.getInput('asana-in-progress-section-id')
   if (sectionId && ['assigned', 'ready_for_review'].includes(action)) {
+    core.info(
+      `pr-asana-sync: moving task ${task.gid} to in-progress section ${sectionId}`
+    )
     await client.sections.addTaskForSection(sectionId, task.gid)
   }
 
-  await client.tasks.updateTask({ data: updateData }, task.gid, {})
+  const hasCompletionUpdate = updateData.completed === true
+  const hasApprovalStatusUpdate = typeof updateData.approval_status === 'string'
+  if (hasCompletionUpdate && hasApprovalStatusUpdate) {
+    core.info(
+      `pr-asana-sync: sending split task updates for ${task.gid} (approval_status and completed)`
+    )
+    const completionValue = updateData.completed
+    delete updateData.completed
+    await client.tasks.updateTask({ data: updateData }, task.gid, {})
+    await client.tasks.updateTask(
+      { data: { completed: completionValue } },
+      task.gid,
+      {}
+    )
+  } else {
+    core.info(`pr-asana-sync: sending task update for ${task.gid}`)
+    await client.tasks.updateTask({ data: updateData }, task.gid, {})
+  }
+  core.info(`pr-asana-sync: fetching refreshed task ${task.gid}`)
   const refreshedTask = await client.tasks.getTask(task.gid)
   core.setOutput(
     'task-url',
     refreshedTask.data?.permalink_url ?? task.permalink_url ?? ''
   )
   core.setOutput('asanaTaskId', task.gid)
+  core.info(`pr-asana-sync: completed successfully for task ${task.gid}`)
+}
+
+async function getAsanaUserId(): Promise<void> {
+  const githubUsername =
+    core.getInput('github-username') ||
+    (github.context.payload as PrPayload).pull_request?.user?.login ||
+    github.context.actor
+
+  if (!githubUsername) {
+    throw new Error(
+      'github-username is required when no pull_request user or github.actor is available'
+    )
+  }
+
+  core.info(`Resolving Asana user id for GitHub user ${githubUsername}`)
+  const asanaUserId = await resolveAsanaUserIdFromGithubUsername(githubUsername, {
+    requireGithubPat: true,
+    failIfMissing: true
+  })
+  core.setOutput('asanaUserId', asanaUserId)
 }
 
 async function isTaskInProject(
@@ -1171,6 +1402,9 @@ export async function run(): Promise<void> {
         break
       case 'send-mattermost-message':
         await sendMattermostMessage()
+        break
+      case 'get-asana-user-id':
+        await getAsanaUserId()
         break
       default:
         throw new Error(`Unexpected action: ${action}`)

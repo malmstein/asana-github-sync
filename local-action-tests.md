@@ -13,8 +13,12 @@ npm install
 
 - Fill required values in `env` (all `INPUT_*` values and event paths you need).
 - Ensure fixture payloads exist:
-  - `__fixtures__/events/pull_request.json`
-  - `__fixtures__/events/pull_request_review.json`
+  - `__fixtures__/events/pull_request_opened.json`
+  - `__fixtures__/events/pull_request_closed.json`
+  - `__fixtures__/events/pull_request_unassigned.json`
+  - `__fixtures__/events/pull_request_review_approved.json`
+  - `__fixtures__/events/pull_request_review_changes_requested.json`
+  - `__fixtures__/events/pull_request_review_commented.json`
   - `__fixtures__/events/issues.json`
 
 Each command below is standalone (no helper required):
@@ -115,16 +119,52 @@ cp env .tmp.env && printf '%s\n' "INPUT_ACTION=add-task-pr-description" >> .tmp.
 cp env .tmp.env && printf '%s\n' "INPUT_ACTION=send-mattermost-message" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
 ```
 
-## 16) pr-asana-sync
+## 16) pr-asana-sync (pull_request opened)
 
 ```bash
-cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request_opened.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
 ```
 
-## 17) pr-asana-sync (pull_request_review)
+## 17) pr-asana-sync (pull_request_review approved)
 
 ```bash
-cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "GITHUB_EVENT_NAME=pull_request_review" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request_review.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "GITHUB_EVENT_NAME=pull_request_review" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request_review_approved.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+```
+
+## 18) pr-asana-sync (pull_request assigned)
+
+```bash
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request_assigned.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+```
+
+## 19) get-asana-user-id
+
+```bash
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=get-asana-user-id" "INPUT_GITHUB-USERNAME=malmstein" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+```
+
+## 20) pr-asana-sync (pull_request closed)
+
+```bash
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request_closed.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+```
+
+## 21) pr-asana-sync (pull_request_review changes_requested)
+
+```bash
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "GITHUB_EVENT_NAME=pull_request_review" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request_review_changes_requested.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+```
+
+## 22) pr-asana-sync (pull_request_review commented)
+
+```bash
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "GITHUB_EVENT_NAME=pull_request_review" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request_review_commented.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+```
+
+## 23) pr-asana-sync (pull_request unassigned)
+
+```bash
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request_unassigned.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
 ```
 
 ---

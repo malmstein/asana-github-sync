@@ -1,8 +1,7 @@
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core.js'
 
-const githubRequest =
-  jest.fn<(...args: unknown[]) => Promise<{ data: { body: string } }>>()
+const githubRequest = jest.fn<(...args: unknown[]) => Promise<{ data: unknown }>>()
 const fetchMock = jest.fn<
   (
     url: string,
@@ -21,6 +20,10 @@ const githubContext = {
   },
   payload: {
     action: 'opened',
+    review: {
+      state: 'approved',
+      user: { login: 'reviewer' }
+    },
     pull_request: {
       number: 123,
       title: 'Feature PR',
@@ -85,7 +88,6 @@ describe('main.ts action router', () => {
     'github-token': 'gh-token',
     'asana-workspace-id': 'workspace-1',
     'asana-in-progress-section-id': '',
-    'user-map': '',
     'randomized-reviewers': '',
     'no-autoclose-projects': '',
     'skipped-users': ''
@@ -279,6 +281,22 @@ describe('main.ts action router', () => {
     )
   })
 
+  it('gets Asana user ID from GitHub username mapping', async () => {
+    useInputs({
+      action: 'get-asana-user-id',
+      'github-pat': 'gh-pat',
+      'github-username': 'reviewer'
+    })
+    githubRequest.mockResolvedValueOnce({
+      data: 'author: asana-author\nreviewer: asana-reviewer\n'
+    })
+
+    await run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.setOutput).toHaveBeenCalledWith('asanaUserId', 'asana-reviewer')
+  })
+
   it('marks Asana task complete', async () => {
     useInputs({
       action: 'mark-asana-task-complete',
@@ -433,8 +451,10 @@ describe('main.ts action router', () => {
     useInputs({
       action: 'pr-asana-sync',
       'asana-workspace-id': 'workspace-1',
-      'asana-project': '111111',
-      'user-map': '{"author":"asana-author","reviewer":"asana-reviewer"}'
+      'asana-project': '111111'
+    })
+    githubRequest.mockResolvedValueOnce({
+      data: 'author: asana-author\nreviewer: asana-reviewer\n'
     })
 
     await run()
@@ -446,6 +466,11 @@ describe('main.ts action router', () => {
       'https://app.asana.com/0/111111/333333/f'
     )
     expect(core.setOutput).toHaveBeenCalledWith('asanaTaskId', '333333')
+    const updateCall = fetchMock.mock.calls.find((call) => {
+      return call[0].includes('/tasks/333333') && call[1]?.method === 'PUT'
+    })
+    expect(updateCall).toBeDefined()
+    expect(updateCall?.[1]?.body).toContain('"assignee":"asana-reviewer"')
   })
 
   it('syncs PR to existing Asana task when already linked', async () => {
@@ -578,19 +603,31 @@ describe('main.ts action router', () => {
 
     await run()
 
-    const updateCall = fetchMock.mock.calls.find((call) => {
+    const updateCalls = fetchMock.mock.calls.filter((call) => {
       return call[0].includes('/tasks/888888') && call[1]?.method === 'PUT'
     })
-    expect(updateCall).toBeDefined()
-    expect(updateCall?.[1]?.body).toContain('"completed":true')
+    expect(updateCalls).toHaveLength(2)
+    const updateBodies = updateCalls.map((call) => String(call[1]?.body ?? ''))
+    expect(updateBodies.some((body) => body.includes('"approval_status":"rejected"'))).toBe(
+      true
+    )
+    expect(updateBodies.some((body) => body.includes('"completed":true'))).toBe(true)
+    expect(
+      updateBodies.some(
+        (body) =>
+          body.includes('"approval_status":"rejected"') &&
+          body.includes('"completed":true')
+      )
+    ).toBe(false)
     expect(core.setOutput).toHaveBeenCalledWith('result', 'updated')
 
     githubContext.payload.action = 'opened'
     githubContext.payload.pull_request.state = 'open'
   })
 
-  it('syncs PR to Asana for pull_request_review submitted', async () => {
+  it('syncs PR to Asana for pull_request_review submitted changes_requested', async () => {
     githubContext.payload.action = 'submitted'
+    githubContext.payload.review.state = 'changes_requested'
     useInputs({
       action: 'pr-asana-sync',
       'asana-workspace-id': 'workspace-1',
@@ -657,7 +694,87 @@ describe('main.ts action router', () => {
       'https://app.asana.com/0/111111/999999/f'
     )
     expect(core.setOutput).toHaveBeenCalledWith('asanaTaskId', '999999')
+    const updateCall = fetchMock.mock.calls.find((call) => {
+      return call[0].includes('/tasks/999999') && call[1]?.method === 'PUT'
+    })
+    expect(updateCall).toBeDefined()
+    expect(updateCall?.[1]?.body).toContain('"cf-status":"st-open"')
+    expect(updateCall?.[1]?.body).toContain('"approval_status":"changes_requested"')
 
     githubContext.payload.action = 'opened'
+    githubContext.payload.review.state = 'approved'
+  })
+
+  it('unassigns Asana task for pull_request unassigned', async () => {
+    githubContext.payload.action = 'unassigned'
+    githubContext.payload.pull_request.assignees = []
+    useInputs({
+      action: 'pr-asana-sync',
+      'asana-workspace-id': 'workspace-1',
+      'asana-project': '111111'
+    })
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/workspaces/workspace-1/custom_fields')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              { gid: 'cf-url', name: 'Github URL' },
+              {
+                gid: 'cf-status',
+                name: 'Github Status',
+                enum_options: [
+                  { gid: 'st-open', name: 'Open' },
+                  { gid: 'st-draft', name: 'Draft' },
+                  { gid: 'st-closed', name: 'Closed' },
+                  { gid: 'st-merged', name: 'Merged' }
+                ]
+              }
+            ]
+          })
+        }
+      }
+      if (url.includes('/workspaces/workspace-1/tasks/search')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              {
+                gid: '121212',
+                permalink_url: 'https://app.asana.com/0/111111/121212/f',
+                projects: [{ gid: '111111' }]
+              }
+            ]
+          })
+        }
+      }
+      if (url.includes('/tasks/121212') && !url.includes('?opt_fields=')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              gid: '121212',
+              permalink_url: 'https://app.asana.com/0/111111/121212/f'
+            }
+          })
+        }
+      }
+      return { ok: true, status: 200, json: async () => ({ data: {} }) }
+    })
+
+    await run()
+
+    const updateCall = fetchMock.mock.calls.find((call) => {
+      return call[0].includes('/tasks/121212') && call[1]?.method === 'PUT'
+    })
+    expect(updateCall).toBeDefined()
+    expect(updateCall?.[1]?.body).toContain('"assignee":null')
+    expect(core.setOutput).toHaveBeenCalledWith('result', 'updated')
+
+    githubContext.payload.action = 'opened'
+    githubContext.payload.pull_request.assignees = [{ login: 'reviewer' }]
   })
 })

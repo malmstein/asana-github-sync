@@ -1,7 +1,7 @@
 {
   "action": "submitted",
   "review": {
-    "state": "approved",
+    "state": "commented",
     "user": {
       "login": "reviewer"
     }
@@ -21,8 +21,8 @@
       }
     ],
     "requested_reviewers": [],
-    "html_url": "https://github.com/duckduckgo/Android/pull/7732",
-    "body": "Task/Issue URL: https://app.asana.com/1/137249556945/project/1174433894299346/task/1213329940926579?focus=true",
+    "html_url": "https://github.com/duckduckgo/Android/pull/7802",
+    "body": "Task/Issue URL: https://app.asana.com/1/137249556945/project/1174433894299346/task/1213367371192401?focus=true",
     "base": {
       "ref": "develop"
     },

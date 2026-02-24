@@ -236,8 +236,8 @@ Required inputs:
 
 Optional inputs:
 
+- `github-pat` (required for GitHub username -> Asana user ID lookup)
 - `github-token` (required only for randomized reviewer assignment)
-- `user-map` (JSON map: GitHub login -> Asana user GID)
 - `randomized-reviewers`
 - `asana-in-progress-section-id`
 - `no-autoclose-projects`
@@ -266,10 +266,25 @@ jobs:
         with:
           action: pr-asana-sync
           asana-pat: ${{ secrets.ASANA_ACCESS_TOKEN }}
+          github-pat: ${{ secrets.GITHUB_PAT }}
           asana-workspace-id: ${{ secrets.ASANA_WORKSPACE_ID }}
           asana-project: ${{ vars.ASANA_PR_PROJECT_ID }}
-          user-map: ${{ vars.ASANA_USER_MAP_JSON }}
 ```
+
+### Get Asana user ID
+
+Action: `get-asana-user-id`
+
+Returns Asana user ID for a provided GitHub username using
+`duckduckgo/internal-github-asana-utils/user_map.yml`.
+
+Required inputs:
+
+- `github-pat`
+
+Optional inputs:
+
+- `github-username` (defaults to PR author when available)
 
 ### Add task(s) to Asana project/section
 

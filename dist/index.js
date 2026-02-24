@@ -58425,6 +58425,13 @@ function getPullRequestBody() {
     }
     return pullRequest.body;
 }
+const GITHUB_ASANA_USER_MAP = {
+    owner: 'duckduckgo',
+    repo: 'internal-github-asana-utils',
+    path: 'user_map.yml'
+};
+let cachedGithubAsanaUserMap = null;
+let cachedGithubAsanaUserMapToken = '';
 const PR_SYNC_CUSTOM_FIELDS = {
     url: 'Github URL',
     status: 'Github Status'
@@ -58451,26 +58458,92 @@ function getDueOn(workingDays) {
     date = new Date(date.getTime() - offset * 60 * 1000);
     return date.toISOString().split('T')[0];
 }
-function parseUserMapInput() {
-    const raw = getInput('user-map');
-    if (!raw)
-        return {};
+function parseGithubAsanaUserMap(rawYaml) {
+    const userMap = {};
+    for (const rawLine of rawYaml.split('\n')) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#'))
+            continue;
+        const separator = line.indexOf(':');
+        if (separator < 1)
+            continue;
+        const githubUsername = line
+            .slice(0, separator)
+            .trim()
+            .replace(/^['"]|['"]$/g, '');
+        const asanaUserId = line
+            .slice(separator + 1)
+            .trim()
+            .replace(/\s+#.*$/, '')
+            .trim()
+            .replace(/^['"]|['"]$/g, '');
+        if (githubUsername && asanaUserId) {
+            userMap[githubUsername] = asanaUserId;
+        }
+    }
+    return userMap;
+}
+async function loadGithubAsanaUserMap(githubPat) {
+    if (cachedGithubAsanaUserMap && cachedGithubAsanaUserMapToken === githubPat) {
+        return cachedGithubAsanaUserMap;
+    }
+    const githubClient = buildGithubClient(githubPat);
+    const response = (await githubClient.request('GET /repos/{owner}/{repo}/contents/{path}', {
+        owner: GITHUB_ASANA_USER_MAP.owner,
+        repo: GITHUB_ASANA_USER_MAP.repo,
+        path: GITHUB_ASANA_USER_MAP.path,
+        headers: {
+            'X-GitHub-Api-Version': '2022-11-28',
+            Accept: 'application/vnd.github.raw+json'
+        }
+    }));
+    let rawYaml = '';
+    if (typeof response.data === 'string') {
+        rawYaml = response.data;
+    }
+    else if (response.data &&
+        typeof response.data === 'object' &&
+        'content' in response.data &&
+        typeof response.data.content === 'string') {
+        const encoded = (response.data.content ?? '').replace(/\n/g, '');
+        rawYaml = Buffer.from(encoded, 'base64').toString('utf8');
+    }
+    else {
+        throw new Error('Unable to read GitHub-Asana user map content');
+    }
+    const parsed = parseGithubAsanaUserMap(rawYaml);
+    cachedGithubAsanaUserMap = parsed;
+    cachedGithubAsanaUserMapToken = githubPat;
+    return parsed;
+}
+async function resolveAsanaUserIdFromGithubUsername(githubUsername, options = {}) {
+    const githubPat = getInput('github-pat');
+    if (!githubPat) {
+        if (options.requireGithubPat) {
+            throw new Error('Input required and not supplied: github-pat');
+        }
+        info('pr-asana-sync: github-pat not provided, skipping user id lookup');
+        return undefined;
+    }
+    let userMap;
     try {
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object') {
-            throw new Error('user-map must be a JSON object');
-        }
-        const output = {};
-        for (const [key, value] of Object.entries(parsed)) {
-            if (typeof value === 'string' && value.trim() !== '') {
-                output[key] = value;
-            }
-        }
-        return output;
+        userMap = await loadGithubAsanaUserMap(githubPat);
     }
-    catch {
-        throw new Error('Invalid JSON in input user-map');
+    catch (error) {
+        if (options.requireGithubPat)
+            throw error;
+        warning(`pr-asana-sync: failed loading GitHub-Asana user map: ${error instanceof Error ? error.message : String(error)}`);
+        return undefined;
     }
+    const asanaUserId = userMap[githubUsername];
+    if (!asanaUserId) {
+        if (options.failIfMissing) {
+            throw new Error(`User ${githubUsername} not found in GitHub-Asana user map`);
+        }
+        info(`pr-asana-sync: no Asana user mapping found for GitHub user ${githubUsername}`);
+        return undefined;
+    }
+    return asanaUserId;
 }
 function getPrState(pr) {
     if (pr.merged)
@@ -58504,25 +58577,32 @@ async function findPrSyncCustomFields(client, workspaceId) {
     return { url, status };
 }
 async function findPrTask(client, workspaceId, projectId, prUrl, customFields) {
+    info('pr-asana-sync: searching workspace for existing task by PR URL');
     const search = await client.tasks.searchTasksInWorkspace(workspaceId, {
         [`custom_fields.${customFields.url.gid}.value`]: prUrl,
         opt_fields: 'name,permalink_url,completed,projects,custom_fields'
     });
     const searchedTasks = Array.isArray(search.data) ? search.data : [];
     const searchedTask = searchedTasks[0];
-    if (searchedTask)
+    if (searchedTask) {
+        info(`pr-asana-sync: found existing task via workspace search (${searchedTask.gid})`);
         return searchedTask;
+    }
+    info('pr-asana-sync: workspace search had no match, scanning project task list');
     const projectTasks = await client.tasks.getTasksForProject(projectId, 'name,permalink_url,completed,projects,custom_fields');
     const projectTaskList = Array.isArray(projectTasks.data)
         ? projectTasks.data
         : [];
+    info(`pr-asana-sync: scanning ${projectTaskList.length} project tasks for URL match`);
     for (const task of projectTaskList) {
         for (const field of task.custom_fields ?? []) {
             if (field.gid === customFields.url.gid && field.display_value === prUrl) {
+                info(`pr-asana-sync: found existing task via project scan (${task.gid})`);
                 return task;
             }
         }
     }
+    info('pr-asana-sync: no existing task found');
     return null;
 }
 function findFirstReviewLogin(pr) {
@@ -58588,11 +58668,9 @@ async function resolvePrAssigneeLogin(pr, reviewerPool) {
         return existing;
     return maybeAssignRandomReviewer(pr, reviewerPool);
 }
-function shouldSkipPrSync(author, userMap) {
+function shouldSkipPrSync(author) {
     const skippedUsers = new Set(getArrayFromInput(getInput('skipped-users')));
     if (skippedUsers.has(author))
-        return true;
-    if (Object.keys(userMap).length > 0 && !userMap[author])
         return true;
     return false;
 }
@@ -58606,6 +58684,7 @@ function shouldClosePrTask(state, task, noAutocloseProjects) {
 async function prAsanaSync() {
     const payload = githubExports.context.payload;
     const action = payload.action ?? '';
+    info(`pr-asana-sync: received event action "${action}"`);
     if (!PR_SYNC_PULL_REQUEST_ACTIONS.has(action)) {
         info(`Skipping pr-asana-sync for pull_request action "${action}"`);
         setOutput('result', 'skipped');
@@ -58614,20 +58693,24 @@ async function prAsanaSync() {
     const pr = payload.pull_request;
     if (!pr)
         throw new Error('Pull request payload is required for pr-asana-sync');
+    info(`pr-asana-sync: processing PR #${pr.number ?? 'unknown'}`);
     const workspaceId = getInput('asana-workspace-id', { required: true });
     const projectId = getInput('asana-project', { required: true });
+    info(`pr-asana-sync: loaded required inputs (workspace=${workspaceId}, project=${projectId})`);
     const client = buildAsanaClient();
+    info('pr-asana-sync: loading required Asana custom fields');
     const customFields = await findPrSyncCustomFields(client, workspaceId);
     const prUrl = ensureString(pr.html_url, 'Pull request URL is required');
     const prState = getPrState(pr);
+    info(`pr-asana-sync: derived PR state "${prState}"`);
     const statusGid = customFields.status.enum_options?.find((opt) => opt.name === prState)
         ?.gid ?? '';
     if (!statusGid) {
         throw new Error(`No enum option found for Github Status "${prState}"`);
     }
-    const userMap = parseUserMapInput();
+    info(`pr-asana-sync: resolved status option gid ${statusGid}`);
     const author = ensureString(pr.user?.login, 'Pull request author is required');
-    if (shouldSkipPrSync(author, userMap)) {
+    if (shouldSkipPrSync(author)) {
         info(`Skipping Asana sync for pull request author: ${author}`);
         setOutput('result', 'skipped');
         setOutput('task-url', '');
@@ -58635,10 +58718,14 @@ async function prAsanaSync() {
     }
     const title = buildPrTaskName(pr);
     const notes = buildPrTaskNotes(pr);
-    const followers = userMap[author] ? [userMap[author]] : undefined;
+    const authorAsanaUserId = await resolveAsanaUserIdFromGithubUsername(author);
+    const followers = authorAsanaUserId ? [authorAsanaUserId] : undefined;
     const parentTaskId = getParentTaskIdFromPrBody(pr.body ?? '');
+    info(`pr-asana-sync: parent task in PR body ${parentTaskId ? `found (${parentTaskId})` : 'not found'}`);
+    info('pr-asana-sync: finding existing PR task');
     let task = await findPrTask(client, workspaceId, projectId, prUrl, customFields);
     if (!task) {
+        info('pr-asana-sync: creating new PR task');
         const createData = {
             resource_subtype: 'approval',
             custom_fields: {
@@ -58659,13 +58746,19 @@ async function prAsanaSync() {
         const taskId = ensureString(created.data?.gid, 'Failed to create PR Asana task');
         task = created.data ?? { gid: taskId };
         setOutput('result', 'created');
+        info(`pr-asana-sync: created task ${task.gid}`);
     }
     else {
         setOutput('result', 'updated');
+        info(`pr-asana-sync: updating existing task ${task.gid}`);
     }
     const reviewerPool = getArrayFromInput(getInput('randomized-reviewers'));
+    info(`pr-asana-sync: reviewer pool contains ${reviewerPool.length} users`);
     const assigneeLogin = await resolvePrAssigneeLogin(pr, reviewerPool);
-    const assignee = assigneeLogin ? userMap[assigneeLogin] : undefined;
+    const assignee = assigneeLogin
+        ? await resolveAsanaUserIdFromGithubUsername(assigneeLogin)
+        : undefined;
+    info(`pr-asana-sync: assignee resolution -> login=${assigneeLogin ?? 'none'}, asana=${assignee ?? 'none'}`);
     const updateData = {
         custom_fields: {
             [customFields.url.gid]: prUrl,
@@ -58680,17 +58773,37 @@ async function prAsanaSync() {
         updateData.due_on = getDueOn(1);
     }
     const noAutocloseProjects = new Set(getArrayFromInput(getInput('no-autoclose-projects')));
-    if (shouldClosePrTask(prState, task, noAutocloseProjects)) {
+    const shouldClose = shouldClosePrTask(prState, task, noAutocloseProjects);
+    info(`pr-asana-sync: should mark task complete = ${String(shouldClose)}`);
+    if (shouldClose) {
         updateData.completed = true;
     }
     const sectionId = getInput('asana-in-progress-section-id');
     if (sectionId && ['assigned', 'ready_for_review'].includes(action)) {
+        info(`pr-asana-sync: moving task ${task.gid} to in-progress section ${sectionId}`);
         await client.sections.addTaskForSection(sectionId, task.gid);
     }
+    info(`pr-asana-sync: sending task update for ${task.gid}`);
     await client.tasks.updateTask({ data: updateData }, task.gid, {});
+    info(`pr-asana-sync: fetching refreshed task ${task.gid}`);
     const refreshedTask = await client.tasks.getTask(task.gid);
     setOutput('task-url', refreshedTask.data?.permalink_url ?? task.permalink_url ?? '');
     setOutput('asanaTaskId', task.gid);
+    info(`pr-asana-sync: completed successfully for task ${task.gid}`);
+}
+async function getAsanaUserId() {
+    const githubUsername = getInput('github-username') ||
+        githubExports.context.payload.pull_request?.user?.login ||
+        githubExports.context.actor;
+    if (!githubUsername) {
+        throw new Error('github-username is required when no pull_request user or github.actor is available');
+    }
+    info(`Resolving Asana user id for GitHub user ${githubUsername}`);
+    const asanaUserId = await resolveAsanaUserIdFromGithubUsername(githubUsername, {
+        requireGithubPat: true,
+        failIfMissing: true
+    });
+    setOutput('asanaUserId', asanaUserId);
 }
 async function isTaskInProject(taskId, projectId) {
     const client = buildAsanaClient();
@@ -59064,6 +59177,9 @@ async function run() {
                 break;
             case 'send-mattermost-message':
                 await sendMattermostMessage();
+                break;
+            case 'get-asana-user-id':
+                await getAsanaUserId();
                 break;
             default:
                 throw new Error(`Unexpected action: ${action}`);
