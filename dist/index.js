@@ -58443,6 +58443,7 @@ const PR_SYNC_PULL_REQUEST_ACTIONS = new Set([
     'reopened',
     'synchronize',
     'assigned',
+    'unassigned',
     'ready_for_review',
     'labeled',
     'submitted',
@@ -58497,7 +58498,7 @@ async function loadGithubAsanaUserMap(githubPat) {
             Accept: 'application/vnd.github.raw+json'
         }
     }));
-    let rawYaml = '';
+    let rawYaml;
     if (typeof response.data === 'string') {
         rawYaml = response.data;
     }
@@ -58554,6 +58555,23 @@ function getPrState(pr) {
         return 'Open';
     }
     return 'Closed';
+}
+function getPrSyncStatusName(action, reviewState, prState) {
+    return prState;
+}
+function getApprovalStatusFromReview(action, reviewState) {
+    if (action !== 'submitted')
+        return undefined;
+    if (reviewState === 'approved')
+        return 'approved';
+    if (reviewState === 'changes_requested')
+        return 'changes_requested';
+    return undefined;
+}
+function getApprovalStatusFromPrState(prState) {
+    if (prState === 'Closed')
+        return 'rejected';
+    return undefined;
 }
 function getParentTaskIdFromPrBody(body) {
     for (const line of body.split('\n')) {
@@ -58702,11 +58720,16 @@ async function prAsanaSync() {
     const customFields = await findPrSyncCustomFields(client, workspaceId);
     const prUrl = ensureString(pr.html_url, 'Pull request URL is required');
     const prState = getPrState(pr);
+    const statusName = getPrSyncStatusName(action, payload.review?.state, prState);
+    const approvalStatus = getApprovalStatusFromReview(action, payload.review?.state) ??
+        getApprovalStatusFromPrState(prState);
     info(`pr-asana-sync: derived PR state "${prState}"`);
-    const statusGid = customFields.status.enum_options?.find((opt) => opt.name === prState)
+    info(`pr-asana-sync: resolved status name "${statusName}"`);
+    info(`pr-asana-sync: resolved approval status "${approvalStatus ?? 'unchanged'}"`);
+    const statusGid = customFields.status.enum_options?.find((opt) => opt.name === statusName)
         ?.gid ?? '';
     if (!statusGid) {
-        throw new Error(`No enum option found for Github Status "${prState}"`);
+        throw new Error(`No enum option found for Github Status "${statusName}"`);
     }
     info(`pr-asana-sync: resolved status option gid ${statusGid}`);
     const author = ensureString(pr.user?.login, 'Pull request author is required');
@@ -58742,6 +58765,8 @@ async function prAsanaSync() {
             createData.followers = followers;
         if (!pr.draft)
             createData.due_on = getDueOn(1);
+        if (approvalStatus)
+            createData.approval_status = approvalStatus;
         const created = await client.tasks.createTask({ data: createData }, {});
         const taskId = ensureString(created.data?.gid, 'Failed to create PR Asana task');
         task = created.data ?? { gid: taskId };
@@ -58754,10 +58779,17 @@ async function prAsanaSync() {
     }
     const reviewerPool = getArrayFromInput(getInput('randomized-reviewers'));
     info(`pr-asana-sync: reviewer pool contains ${reviewerPool.length} users`);
-    const assigneeLogin = await resolvePrAssigneeLogin(pr, reviewerPool);
-    const assignee = assigneeLogin
-        ? await resolveAsanaUserIdFromGithubUsername(assigneeLogin)
-        : undefined;
+    let assigneeLogin;
+    let assignee;
+    if (action === 'unassigned') {
+        assignee = null;
+    }
+    else {
+        assigneeLogin = await resolvePrAssigneeLogin(pr, reviewerPool);
+        assignee = assigneeLogin
+            ? await resolveAsanaUserIdFromGithubUsername(assigneeLogin)
+            : undefined;
+    }
     info(`pr-asana-sync: assignee resolution -> login=${assigneeLogin ?? 'none'}, asana=${assignee ?? 'none'}`);
     const updateData = {
         custom_fields: {
@@ -58767,10 +58799,17 @@ async function prAsanaSync() {
         name: title,
         notes
     };
-    if (assignee)
+    if (assignee === null) {
+        updateData.assignee = null;
+    }
+    else if (assignee) {
         updateData.assignee = assignee;
+    }
     if (action === 'ready_for_review') {
         updateData.due_on = getDueOn(1);
+    }
+    if (approvalStatus) {
+        updateData.approval_status = approvalStatus;
     }
     const noAutocloseProjects = new Set(getArrayFromInput(getInput('no-autoclose-projects')));
     const shouldClose = shouldClosePrTask(prState, task, noAutocloseProjects);
@@ -58783,8 +58822,19 @@ async function prAsanaSync() {
         info(`pr-asana-sync: moving task ${task.gid} to in-progress section ${sectionId}`);
         await client.sections.addTaskForSection(sectionId, task.gid);
     }
-    info(`pr-asana-sync: sending task update for ${task.gid}`);
-    await client.tasks.updateTask({ data: updateData }, task.gid, {});
+    const hasCompletionUpdate = updateData.completed === true;
+    const hasApprovalStatusUpdate = typeof updateData.approval_status === 'string';
+    if (hasCompletionUpdate && hasApprovalStatusUpdate) {
+        info(`pr-asana-sync: sending split task updates for ${task.gid} (approval_status and completed)`);
+        const completionValue = updateData.completed;
+        delete updateData.completed;
+        await client.tasks.updateTask({ data: updateData }, task.gid, {});
+        await client.tasks.updateTask({ data: { completed: completionValue } }, task.gid, {});
+    }
+    else {
+        info(`pr-asana-sync: sending task update for ${task.gid}`);
+        await client.tasks.updateTask({ data: updateData }, task.gid, {});
+    }
     info(`pr-asana-sync: fetching refreshed task ${task.gid}`);
     const refreshedTask = await client.tasks.getTask(task.gid);
     setOutput('task-url', refreshedTask.data?.permalink_url ?? task.permalink_url ?? '');

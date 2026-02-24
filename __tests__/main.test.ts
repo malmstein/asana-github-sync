@@ -1,7 +1,8 @@
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core.js'
 
-const githubRequest = jest.fn<(...args: unknown[]) => Promise<{ data: unknown }>>()
+const githubRequest =
+  jest.fn<(...args: unknown[]) => Promise<{ data: unknown }>>()
 const fetchMock = jest.fn<
   (
     url: string,
@@ -608,10 +609,12 @@ describe('main.ts action router', () => {
     })
     expect(updateCalls).toHaveLength(2)
     const updateBodies = updateCalls.map((call) => String(call[1]?.body ?? ''))
-    expect(updateBodies.some((body) => body.includes('"approval_status":"rejected"'))).toBe(
+    expect(
+      updateBodies.some((body) => body.includes('"approval_status":"rejected"'))
+    ).toBe(true)
+    expect(updateBodies.some((body) => body.includes('"completed":true'))).toBe(
       true
     )
-    expect(updateBodies.some((body) => body.includes('"completed":true'))).toBe(true)
     expect(
       updateBodies.some(
         (body) =>
@@ -699,7 +702,9 @@ describe('main.ts action router', () => {
     })
     expect(updateCall).toBeDefined()
     expect(updateCall?.[1]?.body).toContain('"cf-status":"st-open"')
-    expect(updateCall?.[1]?.body).toContain('"approval_status":"changes_requested"')
+    expect(updateCall?.[1]?.body).toContain(
+      '"approval_status":"changes_requested"'
+    )
 
     githubContext.payload.action = 'opened'
     githubContext.payload.review.state = 'approved'

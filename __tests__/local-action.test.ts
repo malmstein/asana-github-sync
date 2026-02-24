@@ -13,7 +13,7 @@ function runLocalActionWithEnvLines(envLines: string[]): string {
       'npx',
       ['@github/local-action', '.', 'src/main.ts', envPath],
       {
-        cwd: '/workspaces/asana-github-sync',
+        cwd: process.cwd(),
         encoding: 'utf8'
       }
     )

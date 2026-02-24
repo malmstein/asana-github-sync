@@ -440,7 +440,7 @@ async function loadGithubAsanaUserMap(
     }
   )) as { data: unknown }
 
-  let rawYaml = ''
+  let rawYaml: string
   if (typeof response.data === 'string') {
     rawYaml = response.data
   } else if (
@@ -449,10 +449,9 @@ async function loadGithubAsanaUserMap(
     'content' in response.data &&
     typeof (response.data as { content?: unknown }).content === 'string'
   ) {
-    const encoded = ((response.data as { content: string }).content ?? '').replace(
-      /\n/g,
-      ''
-    )
+    const encoded = (
+      (response.data as { content: string }).content ?? ''
+    ).replace(/\n/g, '')
     rawYaml = Buffer.from(encoded, 'base64').toString('utf8')
   } else {
     throw new Error('Unable to read GitHub-Asana user map content')
@@ -491,7 +490,9 @@ async function resolveAsanaUserIdFromGithubUsername(
   const asanaUserId = userMap[githubUsername]
   if (!asanaUserId) {
     if (options.failIfMissing) {
-      throw new Error(`User ${githubUsername} not found in GitHub-Asana user map`)
+      throw new Error(
+        `User ${githubUsername} not found in GitHub-Asana user map`
+      )
     }
     core.info(
       `pr-asana-sync: no Asana user mapping found for GitHub user ${githubUsername}`
@@ -701,9 +702,7 @@ async function resolvePrAssigneeLogin(
   return maybeAssignRandomReviewer(pr, reviewerPool)
 }
 
-function shouldSkipPrSync(
-  author: string
-): boolean {
+function shouldSkipPrSync(author: string): boolean {
   const skippedUsers = new Set(
     getArrayFromInput(core.getInput('skipped-users'))
   )
@@ -915,10 +914,13 @@ async function getAsanaUserId(): Promise<void> {
   }
 
   core.info(`Resolving Asana user id for GitHub user ${githubUsername}`)
-  const asanaUserId = await resolveAsanaUserIdFromGithubUsername(githubUsername, {
-    requireGithubPat: true,
-    failIfMissing: true
-  })
+  const asanaUserId = await resolveAsanaUserIdFromGithubUsername(
+    githubUsername,
+    {
+      requireGithubPat: true,
+      failIfMissing: true
+    }
+  )
   core.setOutput('asanaUserId', asanaUserId)
 }
 
