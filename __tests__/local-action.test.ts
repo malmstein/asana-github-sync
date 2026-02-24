@@ -77,6 +77,19 @@ describe('local-action', () => {
           ]
         },
         {
+          name: 'pr-asana-sync-assign-pr-author',
+          action: 'pr-asana-sync',
+          envLines: [
+            `INPUT_ASANA-PAT=${asanaPat}`,
+            `INPUT_GITHUB-PAT=${githubPat}`,
+            `INPUT_ASANA-PROJECT=${asanaProjectId}`,
+            `INPUT_ASANA-WORKSPACE-ID=${asanaWorkspaceId}`,
+            'INPUT_ASSIGN-PR-AUTHOR=true',
+            'GITHUB_EVENT_NAME=pull_request',
+            'GITHUB_EVENT_PATH=__fixtures__/events/pull_request_opened.json'
+          ]
+        },
+        {
           name: 'create-asana-task',
           action: 'create-asana-task',
           envLines: [

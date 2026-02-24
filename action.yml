@@ -90,6 +90,9 @@ inputs:
   randomized-reviewers:
     description: Comma-separated GitHub users eligible as fallback reviewer
     required: false
+  assign-pr-author:
+    description: If 'true', the PR task will be assigned to the GitHub PR author
+    required: false
   no-autoclose-projects:
     description: Comma-separated Asana project IDs excluded from auto-close
     required: false

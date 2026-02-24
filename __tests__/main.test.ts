@@ -90,6 +90,7 @@ describe('main.ts action router', () => {
     'asana-workspace-id': 'workspace-1',
     'asana-in-progress-section-id': '',
     'randomized-reviewers': '',
+    'assign-pr-author': 'false',
     'no-autoclose-projects': '',
     'skipped-users': ''
   }
@@ -472,6 +473,27 @@ describe('main.ts action router', () => {
     })
     expect(updateCall).toBeDefined()
     expect(updateCall?.[1]?.body).toContain('"assignee":"asana-reviewer"')
+  })
+
+  it('assigns PR task to PR author when assign-pr-author is true', async () => {
+    useInputs({
+      action: 'pr-asana-sync',
+      'asana-workspace-id': 'workspace-1',
+      'asana-project': '111111',
+      'assign-pr-author': 'true'
+    })
+    githubRequest.mockResolvedValueOnce({
+      data: 'author: asana-author\nreviewer: asana-reviewer\n'
+    })
+
+    await run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    const updateCall = fetchMock.mock.calls.find((call) => {
+      return call[0].includes('/tasks/333333') && call[1]?.method === 'PUT'
+    })
+    expect(updateCall).toBeDefined()
+    expect(updateCall?.[1]?.body).toContain('"assignee":"asana-author"')
   })
 
   it('syncs PR to existing Asana task when already linked', async () => {

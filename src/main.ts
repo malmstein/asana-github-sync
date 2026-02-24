@@ -819,13 +819,17 @@ async function prAsanaSync(): Promise<void> {
   }
 
   const reviewerPool = getArrayFromInput(core.getInput('randomized-reviewers'))
+  const assignPrAuthor = parseBooleanInput('assign-pr-author', false)
   core.info(
-    `pr-asana-sync: reviewer pool contains ${reviewerPool.length} users`
+    `pr-asana-sync: reviewer pool contains ${reviewerPool.length} users (assign-pr-author=${String(assignPrAuthor)})`
   )
   let assigneeLogin: string | undefined
   let assignee: string | null | undefined
   if (action === 'unassigned') {
     assignee = null
+  } else if (assignPrAuthor) {
+    assigneeLogin = author
+    assignee = await resolveAsanaUserIdFromGithubUsername(assigneeLogin)
   } else {
     assigneeLogin = await resolvePrAssigneeLogin(pr, reviewerPool)
     assignee = assigneeLogin

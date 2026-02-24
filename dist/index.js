@@ -58778,11 +58778,16 @@ async function prAsanaSync() {
         info(`pr-asana-sync: updating existing task ${task.gid}`);
     }
     const reviewerPool = getArrayFromInput(getInput('randomized-reviewers'));
-    info(`pr-asana-sync: reviewer pool contains ${reviewerPool.length} users`);
+    const assignPrAuthor = parseBooleanInput('assign-pr-author', false);
+    info(`pr-asana-sync: reviewer pool contains ${reviewerPool.length} users (assign-pr-author=${String(assignPrAuthor)})`);
     let assigneeLogin;
     let assignee;
     if (action === 'unassigned') {
         assignee = null;
+    }
+    else if (assignPrAuthor) {
+        assigneeLogin = author;
+        assignee = await resolveAsanaUserIdFromGithubUsername(assigneeLogin);
     }
     else {
         assigneeLogin = await resolvePrAssigneeLogin(pr, reviewerPool);

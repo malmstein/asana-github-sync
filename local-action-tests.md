@@ -167,6 +167,12 @@ cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "GITHUB_EVENT_NAME
 cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request_unassigned.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
 ```
 
+## 24) pr-asana-sync (assign PR author)
+
+```bash
+cp env .tmp.env && printf '%s\n' "INPUT_ACTION=pr-asana-sync" "INPUT_ASSIGN-PR-AUTHOR=true" "GITHUB_EVENT_NAME=pull_request" "GITHUB_EVENT_PATH=__fixtures__/events/pull_request_opened.json" >> .tmp.env && npx @github/local-action . src/main.ts .tmp.env && rm -f .tmp.env
+```
+
 ---
 
 ## Quick smoke test (no external API calls)

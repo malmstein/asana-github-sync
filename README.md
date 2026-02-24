@@ -239,6 +239,7 @@ Optional inputs:
 - `github-pat` (required for GitHub username -> Asana user ID lookup)
 - `github-token` (required only for randomized reviewer assignment)
 - `randomized-reviewers`
+- `assign-pr-author` (if `true`, assign the Asana PR task to the PR author)
 - `asana-in-progress-section-id`
 - `no-autoclose-projects`
 - `skipped-users`
