@@ -58301,7 +58301,8 @@ function buildAsanaClient() {
             body: body ? JSON.stringify(body) : undefined
         });
         if (!response.ok) {
-            throw new Error(`Asana API request failed (${response.status}) for ${path}`);
+            const errorBody = await response.text().catch(() => '');
+            throw new Error(`Asana API request failed (${response.status}) for ${path}${errorBody ? `: ${errorBody}` : ''}`);
         }
         return (await response.json());
     };
@@ -58322,13 +58323,50 @@ function buildAsanaClient() {
             updateTask: async (body, taskId, _opts) => {
                 return request('PUT', `/tasks/${encodeURIComponent(taskId)}`, body);
             },
-            getTasksForSection: async (sectionId) => (await request('GET', `/sections/${encodeURIComponent(sectionId)}/tasks`)),
-            getTasksForProject: async (projectId) => (await request('GET', `/projects/${encodeURIComponent(projectId)}/tasks`))
+            getTasksForSection: async (sectionId, optFields) => {
+                const query = optFields
+                    ? `?opt_fields=${encodeURIComponent(optFields)}`
+                    : '';
+                return (await request('GET', `/sections/${encodeURIComponent(sectionId)}/tasks${query}`));
+            },
+            getTasksForProject: async (projectId, optFields) => {
+                const query = optFields
+                    ? `?opt_fields=${encodeURIComponent(optFields)}`
+                    : '';
+                return (await request('GET', `/projects/${encodeURIComponent(projectId)}/tasks${query}`));
+            },
+            searchTasksInWorkspace: async (workspaceId, query) => {
+                const params = new URLSearchParams(query).toString();
+                return (await request('GET', `/workspaces/${encodeURIComponent(workspaceId)}/tasks/search?${params}`));
+            },
+            getSubtasksForTask: async (taskId, optFields = 'name,completed,assignee,custom_fields,permalink_url') => (await request('GET', `/tasks/${encodeURIComponent(taskId)}/subtasks?opt_fields=${encodeURIComponent(optFields)}`))
         },
         stories: {
             createStoryForTask: async (body, taskId, _opts) => {
                 return request('POST', `/tasks/${encodeURIComponent(taskId)}/stories`, body);
             }
+        },
+        customFields: {
+            getCustomFieldsForWorkspace: async (workspaceId) => {
+                const fields = [];
+                let offset;
+                do {
+                    const query = new URLSearchParams({
+                        limit: '100'
+                    });
+                    if (offset)
+                        query.set('offset', offset);
+                    const page = (await request('GET', `/workspaces/${encodeURIComponent(workspaceId)}/custom_fields?${query.toString()}`));
+                    fields.push(...(page.data ?? []));
+                    offset = page.next_page?.offset;
+                } while (offset);
+                return { data: fields };
+            }
+        },
+        sections: {
+            addTaskForSection: async (sectionId, taskId) => request('POST', `/sections/${encodeURIComponent(sectionId)}/addTask`, {
+                data: { task: taskId }
+            })
         }
     };
 }
@@ -58387,6 +58425,273 @@ function getPullRequestBody() {
     }
     return pullRequest.body;
 }
+const PR_SYNC_CUSTOM_FIELDS = {
+    url: 'Github URL',
+    status: 'Github Status'
+};
+const PR_SYNC_PULL_REQUEST_ACTIONS = new Set([
+    'opened',
+    'edited',
+    'closed',
+    'reopened',
+    'synchronize',
+    'assigned',
+    'ready_for_review',
+    'labeled',
+    'submitted',
+    'dismissed'
+]);
+function getDueOn(workingDays) {
+    let date = new Date();
+    const weekends = Math.floor(workingDays / 5);
+    const dueOnDay = date.getDay() + weekends * 2 + workingDays;
+    const additionalDays = weekends * 2 + ((dueOnDay % 7) % 6 === 0 ? 2 : 0);
+    date.setDate(date.getDate() + workingDays + additionalDays);
+    const offset = date.getTimezoneOffset();
+    date = new Date(date.getTime() - offset * 60 * 1000);
+    return date.toISOString().split('T')[0];
+}
+function parseUserMapInput() {
+    const raw = getInput('user-map');
+    if (!raw)
+        return {};
+    try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') {
+            throw new Error('user-map must be a JSON object');
+        }
+        const output = {};
+        for (const [key, value] of Object.entries(parsed)) {
+            if (typeof value === 'string' && value.trim() !== '') {
+                output[key] = value;
+            }
+        }
+        return output;
+    }
+    catch {
+        throw new Error('Invalid JSON in input user-map');
+    }
+}
+function getPrState(pr) {
+    if (pr.merged)
+        return 'Merged';
+    if (pr.state === 'open') {
+        if (pr.draft)
+            return 'Draft';
+        return 'Open';
+    }
+    return 'Closed';
+}
+function getParentTaskIdFromPrBody(body) {
+    for (const line of body.split('\n')) {
+        const phraseIndex = line.indexOf('Task/Issue URL:');
+        if (phraseIndex < 0)
+            continue;
+        const refs = extractAsanaTaskRefs(line.slice(phraseIndex + 15));
+        if (refs.length > 0)
+            return refs[0].taskId;
+    }
+    return null;
+}
+async function findPrSyncCustomFields(client, workspaceId) {
+    const response = await client.customFields.getCustomFieldsForWorkspace(workspaceId);
+    const fields = response.data ?? [];
+    const url = fields.find((field) => field.name === PR_SYNC_CUSTOM_FIELDS.url);
+    const status = fields.find((field) => field.name === PR_SYNC_CUSTOM_FIELDS.status);
+    if (!url || !status) {
+        throw new Error(`Custom fields "${PR_SYNC_CUSTOM_FIELDS.url}" and "${PR_SYNC_CUSTOM_FIELDS.status}" are required`);
+    }
+    return { url, status };
+}
+async function findPrTask(client, workspaceId, projectId, prUrl, customFields) {
+    const search = await client.tasks.searchTasksInWorkspace(workspaceId, {
+        [`custom_fields.${customFields.url.gid}.value`]: prUrl,
+        opt_fields: 'name,permalink_url,completed,projects,custom_fields'
+    });
+    const searchedTasks = Array.isArray(search.data) ? search.data : [];
+    const searchedTask = searchedTasks[0];
+    if (searchedTask)
+        return searchedTask;
+    const projectTasks = await client.tasks.getTasksForProject(projectId, 'name,permalink_url,completed,projects,custom_fields');
+    const projectTaskList = Array.isArray(projectTasks.data)
+        ? projectTasks.data
+        : [];
+    for (const task of projectTaskList) {
+        for (const field of task.custom_fields ?? []) {
+            if (field.gid === customFields.url.gid && field.display_value === prUrl) {
+                return task;
+            }
+        }
+    }
+    return null;
+}
+function findFirstReviewLogin(pr) {
+    const author = pr.user?.login;
+    const assignee = (pr.assignees ?? []).find((user) => user.login !== author);
+    if (assignee)
+        return assignee.login;
+    const requested = (pr.requested_reviewers ?? []).find((user) => user.login !== author);
+    if (requested)
+        return requested.login;
+    return undefined;
+}
+function buildPrTaskName(pr) {
+    const number = typeof pr.number === 'number' ? pr.number : 0;
+    const title = ensureString(pr.title, 'Pull request title is required');
+    return `Code review for PR #${number}: ${title}`;
+}
+function buildPrTaskNotes(pr) {
+    const prUrl = ensureString(pr.html_url, 'Pull request URL is required');
+    const body = typeof pr.body === 'string' && pr.body.trim() !== ''
+        ? pr.body
+        : 'Empty description';
+    const truncatedBody = (body.length > 5000 ? `${body.slice(0, 5000)}...` : body).replace(/^---$[\s\S]*/gm, '');
+    return `PR: ${prUrl}\n\n${truncatedBody}`;
+}
+async function maybeAssignRandomReviewer(pr, reviewerPool) {
+    const author = pr.user?.login ?? '';
+    const candidates = reviewerPool.filter((reviewer) => reviewer.trim() !== '' && reviewer.trim() !== author);
+    if (candidates.length === 0)
+        return undefined;
+    const reviewer = candidates[Math.floor(Math.random() * candidates.length)]?.trim();
+    if (!reviewer)
+        return undefined;
+    const token = getInput('github-token');
+    if (!token)
+        return undefined;
+    const owner = githubExports.context.repo.owner;
+    const repo = githubExports.context.repo.repo;
+    const pullNumber = pr.number;
+    if (!owner || !repo || typeof pullNumber !== 'number')
+        return undefined;
+    const githubClient = buildGithubClient(token);
+    await githubClient.request('POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers', {
+        owner,
+        repo,
+        pull_number: pullNumber,
+        reviewers: [reviewer],
+        headers: { 'X-GitHub-Api-Version': '2022-11-28' }
+    });
+    await githubClient.request('POST /repos/{owner}/{repo}/issues/{issue_number}/assignees', {
+        owner,
+        repo,
+        issue_number: pullNumber,
+        assignees: [reviewer],
+        headers: { 'X-GitHub-Api-Version': '2022-11-28' }
+    });
+    info(`PR is assigned to randomized reviewer: ${reviewer}`);
+    return reviewer;
+}
+async function resolvePrAssigneeLogin(pr, reviewerPool) {
+    const existing = findFirstReviewLogin(pr);
+    if (existing)
+        return existing;
+    return maybeAssignRandomReviewer(pr, reviewerPool);
+}
+function shouldSkipPrSync(author, userMap) {
+    const skippedUsers = new Set(getArrayFromInput(getInput('skipped-users')));
+    if (skippedUsers.has(author))
+        return true;
+    if (Object.keys(userMap).length > 0 && !userMap[author])
+        return true;
+    return false;
+}
+function shouldClosePrTask(state, task, noAutocloseProjects) {
+    if (!['Closed', 'Merged'].includes(state))
+        return false;
+    if (noAutocloseProjects.size === 0)
+        return true;
+    return !(task.projects ?? []).some((project) => noAutocloseProjects.has(project.gid));
+}
+async function prAsanaSync() {
+    const payload = githubExports.context.payload;
+    const action = payload.action ?? '';
+    if (!PR_SYNC_PULL_REQUEST_ACTIONS.has(action)) {
+        info(`Skipping pr-asana-sync for pull_request action "${action}"`);
+        setOutput('result', 'skipped');
+        return;
+    }
+    const pr = payload.pull_request;
+    if (!pr)
+        throw new Error('Pull request payload is required for pr-asana-sync');
+    const workspaceId = getInput('asana-workspace-id', { required: true });
+    const projectId = getInput('asana-project', { required: true });
+    const client = buildAsanaClient();
+    const customFields = await findPrSyncCustomFields(client, workspaceId);
+    const prUrl = ensureString(pr.html_url, 'Pull request URL is required');
+    const prState = getPrState(pr);
+    const statusGid = customFields.status.enum_options?.find((opt) => opt.name === prState)
+        ?.gid ?? '';
+    if (!statusGid) {
+        throw new Error(`No enum option found for Github Status "${prState}"`);
+    }
+    const userMap = parseUserMapInput();
+    const author = ensureString(pr.user?.login, 'Pull request author is required');
+    if (shouldSkipPrSync(author, userMap)) {
+        info(`Skipping Asana sync for pull request author: ${author}`);
+        setOutput('result', 'skipped');
+        setOutput('task-url', '');
+        return;
+    }
+    const title = buildPrTaskName(pr);
+    const notes = buildPrTaskNotes(pr);
+    const followers = userMap[author] ? [userMap[author]] : undefined;
+    const parentTaskId = getParentTaskIdFromPrBody(pr.body ?? '');
+    let task = await findPrTask(client, workspaceId, projectId, prUrl, customFields);
+    if (!task) {
+        const createData = {
+            resource_subtype: 'approval',
+            custom_fields: {
+                [customFields.url.gid]: prUrl,
+                [customFields.status.gid]: statusGid
+            },
+            name: title,
+            notes,
+            projects: [projectId]
+        };
+        if (parentTaskId)
+            createData.parent = parentTaskId;
+        if (followers && followers.length > 0)
+            createData.followers = followers;
+        if (!pr.draft)
+            createData.due_on = getDueOn(1);
+        const created = await client.tasks.createTask({ data: createData }, {});
+        const taskId = ensureString(created.data?.gid, 'Failed to create PR Asana task');
+        task = created.data ?? { gid: taskId };
+        setOutput('result', 'created');
+    }
+    else {
+        setOutput('result', 'updated');
+    }
+    const reviewerPool = getArrayFromInput(getInput('randomized-reviewers'));
+    const assigneeLogin = await resolvePrAssigneeLogin(pr, reviewerPool);
+    const assignee = assigneeLogin ? userMap[assigneeLogin] : undefined;
+    const updateData = {
+        custom_fields: {
+            [customFields.url.gid]: prUrl,
+            [customFields.status.gid]: statusGid
+        },
+        name: title,
+        notes
+    };
+    if (assignee)
+        updateData.assignee = assignee;
+    if (action === 'ready_for_review') {
+        updateData.due_on = getDueOn(1);
+    }
+    const noAutocloseProjects = new Set(getArrayFromInput(getInput('no-autoclose-projects')));
+    if (shouldClosePrTask(prState, task, noAutocloseProjects)) {
+        updateData.completed = true;
+    }
+    const sectionId = getInput('asana-in-progress-section-id');
+    if (sectionId && ['assigned', 'ready_for_review'].includes(action)) {
+        await client.sections.addTaskForSection(sectionId, task.gid);
+    }
+    await client.tasks.updateTask({ data: updateData }, task.gid, {});
+    const refreshedTask = await client.tasks.getTask(task.gid);
+    setOutput('task-url', refreshedTask.data?.permalink_url ?? task.permalink_url ?? '');
+    setOutput('asanaTaskId', task.gid);
+}
 async function isTaskInProject(taskId, projectId) {
     const client = buildAsanaClient();
     try {
@@ -58434,10 +58739,19 @@ async function findAsanaTasks() {
     return [...new Set(foundTaskIds)];
 }
 async function createStory(client, taskId, text, isPinned, isHtml = false) {
-    const body = isHtml
-        ? { data: { is_pinned: isPinned, html_text: text } }
-        : { data: { is_pinned: isPinned, text } };
-    await client.stories.createStoryForTask(body, taskId, {});
+    const storyData = isHtml ? { html_text: text } : { text };
+    const body = { data: { ...storyData, is_pinned: isPinned } };
+    try {
+        await client.stories.createStoryForTask(body, taskId, {});
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!isPinned || !message.includes('(400)')) {
+            throw error;
+        }
+        warning(`Asana rejected pinned comment for task ${taskId}; retrying without pinning`);
+        await client.stories.createStoryForTask({ data: storyData }, taskId, {});
+    }
 }
 async function addTaskToProject(client, taskId, projectId, sectionId) {
     const data = sectionId
@@ -58582,6 +58896,18 @@ async function findAsanaTaskIds() {
         throw new Error("Can't find any Asana tasks with the expected prefix");
     setOutput('asanaTaskIds', tasks.join(','));
 }
+function setAsanaTaskOutputs(taskIds, actionName) {
+    if (taskIds.length === 0) {
+        warning(`No Asana tasks found for action: ${actionName}`);
+        setOutput('asanaTaskFound', false);
+        setOutput('asanaTaskId', '');
+        setOutput('asanaTaskIds', '');
+        return;
+    }
+    setOutput('asanaTaskFound', true);
+    setOutput('asanaTaskId', taskIds[0]);
+    setOutput('asanaTaskIds', taskIds.join(','));
+}
 async function addCommentToPRTask() {
     const client = buildAsanaClient();
     const pullRequest = githubExports.context.payload.pull_request;
@@ -58591,6 +58917,7 @@ async function addCommentToPRTask() {
     for (const taskId of taskIds) {
         await createStory(client, taskId, `PR: ${prUrl}`, isPinned);
     }
+    setAsanaTaskOutputs(taskIds, 'add-asana-comment');
 }
 async function notifyPRApproved() {
     const client = buildAsanaClient();
@@ -58600,6 +58927,7 @@ async function notifyPRApproved() {
     for (const taskId of taskIds) {
         await createStory(client, taskId, `PR: ${prUrl} has been approved`, false);
     }
+    setAsanaTaskOutputs(taskIds, 'notify-pr-approved');
 }
 async function completePRTask() {
     const isComplete = parseBooleanInput('is-complete', false);
@@ -58607,6 +58935,7 @@ async function completePRTask() {
     for (const taskId of taskIds) {
         await completeAsanaTask(taskId, isComplete);
     }
+    setAsanaTaskOutputs(taskIds, 'notify-pr-merged');
 }
 async function addTaskToAsanaProject() {
     const client = buildAsanaClient();
@@ -58723,6 +59052,9 @@ async function run() {
                 break;
             case 'notify-pr-merged':
                 await completePRTask();
+                break;
+            case 'pr-asana-sync':
+                await prAsanaSync();
                 break;
             case 'add-task-asana-project':
                 await addTaskToAsanaProject();
