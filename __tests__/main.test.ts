@@ -1,11 +1,13 @@
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core.js'
 
-const githubRequest = jest.fn<
-  (...args: unknown[]) => Promise<{ data: { body: string } }>
->()
+const githubRequest =
+  jest.fn<(...args: unknown[]) => Promise<{ data: { body: string } }>>()
 const fetchMock = jest.fn<
-  (url: string, init?: RequestInit) => Promise<{
+  (
+    url: string,
+    init?: RequestInit
+  ) => Promise<{
     ok: boolean
     status: number
     json: () => Promise<unknown>
@@ -13,8 +15,21 @@ const fetchMock = jest.fn<
 >()
 
 const githubContext = {
+  repo: {
+    owner: 'acme',
+    repo: 'repo'
+  },
   payload: {
+    action: 'opened',
     pull_request: {
+      number: 123,
+      title: 'Feature PR',
+      state: 'open',
+      merged: false,
+      draft: false,
+      user: { login: 'author' },
+      assignees: [{ login: 'reviewer' }],
+      requested_reviewers: [],
       html_url: 'https://github.com/acme/repo/pull/123',
       body: 'Task/Issue URL: https://app.asana.com/0/111111/222222/f'
     },
@@ -66,7 +81,14 @@ describe('main.ts action router', () => {
     'github-pat': 'gh-pat',
     'github-org': 'acme',
     'github-repository': 'repo',
-    'github-pr': '123'
+    'github-pr': '123',
+    'github-token': 'gh-token',
+    'asana-workspace-id': 'workspace-1',
+    'asana-in-progress-section-id': '',
+    'user-map': '',
+    'randomized-reviewers': '',
+    'no-autoclose-projects': '',
+    'skipped-users': ''
   }
 
   function useInputs(overrides: Record<string, string> = {}): void {
@@ -83,6 +105,30 @@ describe('main.ts action router', () => {
     useInputs()
 
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('/workspaces/workspace-1/custom_fields')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              { gid: 'cf-url', name: 'Github URL' },
+              {
+                gid: 'cf-status',
+                name: 'Github Status',
+                enum_options: [
+                  { gid: 'st-open', name: 'Open' },
+                  { gid: 'st-draft', name: 'Draft' },
+                  { gid: 'st-closed', name: 'Closed' },
+                  { gid: 'st-merged', name: 'Merged' }
+                ]
+              }
+            ]
+          })
+        }
+      }
+      if (url.includes('/workspaces/workspace-1/tasks/search')) {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) }
+      }
       if (url.includes('/tasks') && init?.method === 'POST') {
         return {
           ok: true,
@@ -111,6 +157,18 @@ describe('main.ts action router', () => {
             data: {
               gid: '222222',
               permalink_url: 'https://app.asana.com/0/111111/222222/f'
+            }
+          })
+        }
+      }
+      if (url.includes('/tasks/333333') && !url.includes('?opt_fields=')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              gid: '333333',
+              permalink_url: 'https://app.asana.com/0/111111/333333/f'
             }
           })
         }
@@ -369,5 +427,237 @@ describe('main.ts action router', () => {
     expect(core.setFailed).toHaveBeenCalledWith(
       'Unexpected action: unknown-action'
     )
+  })
+
+  it('syncs PR to Asana and creates task when missing', async () => {
+    useInputs({
+      action: 'pr-asana-sync',
+      'asana-workspace-id': 'workspace-1',
+      'asana-project': '111111',
+      'user-map': '{"author":"asana-author","reviewer":"asana-reviewer"}'
+    })
+
+    await run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.setOutput).toHaveBeenCalledWith('result', 'created')
+    expect(core.setOutput).toHaveBeenCalledWith(
+      'task-url',
+      'https://app.asana.com/0/111111/333333/f'
+    )
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskId', '333333')
+  })
+
+  it('syncs PR to existing Asana task when already linked', async () => {
+    useInputs({
+      action: 'pr-asana-sync',
+      'asana-workspace-id': 'workspace-1',
+      'asana-project': '111111'
+    })
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/workspaces/workspace-1/custom_fields')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              { gid: 'cf-url', name: 'Github URL' },
+              {
+                gid: 'cf-status',
+                name: 'Github Status',
+                enum_options: [
+                  { gid: 'st-open', name: 'Open' },
+                  { gid: 'st-draft', name: 'Draft' },
+                  { gid: 'st-closed', name: 'Closed' },
+                  { gid: 'st-merged', name: 'Merged' }
+                ]
+              }
+            ]
+          })
+        }
+      }
+      if (url.includes('/workspaces/workspace-1/tasks/search')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              {
+                gid: '777777',
+                permalink_url: 'https://app.asana.com/0/111111/777777/f',
+                projects: [{ gid: '111111' }]
+              }
+            ]
+          })
+        }
+      }
+      if (url.includes('/tasks/777777') && !url.includes('?opt_fields=')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              gid: '777777',
+              permalink_url: 'https://app.asana.com/0/111111/777777/f'
+            }
+          })
+        }
+      }
+      return { ok: true, status: 200, json: async () => ({ data: {} }) }
+    })
+
+    await run()
+
+    expect(core.setOutput).toHaveBeenCalledWith('result', 'updated')
+    expect(core.setOutput).toHaveBeenCalledWith(
+      'task-url',
+      'https://app.asana.com/0/111111/777777/f'
+    )
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskId', '777777')
+  })
+
+  it('marks PR sync task complete when PR is closed', async () => {
+    githubContext.payload.action = 'closed'
+    githubContext.payload.pull_request.state = 'closed'
+    useInputs({
+      action: 'pr-asana-sync',
+      'asana-workspace-id': 'workspace-1',
+      'asana-project': '111111'
+    })
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/workspaces/workspace-1/custom_fields')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              { gid: 'cf-url', name: 'Github URL' },
+              {
+                gid: 'cf-status',
+                name: 'Github Status',
+                enum_options: [
+                  { gid: 'st-open', name: 'Open' },
+                  { gid: 'st-draft', name: 'Draft' },
+                  { gid: 'st-closed', name: 'Closed' },
+                  { gid: 'st-merged', name: 'Merged' }
+                ]
+              }
+            ]
+          })
+        }
+      }
+      if (url.includes('/workspaces/workspace-1/tasks/search')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              {
+                gid: '888888',
+                permalink_url: 'https://app.asana.com/0/111111/888888/f',
+                projects: [{ gid: '111111' }]
+              }
+            ]
+          })
+        }
+      }
+      if (url.includes('/tasks/888888') && !url.includes('?opt_fields=')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              gid: '888888',
+              permalink_url: 'https://app.asana.com/0/111111/888888/f'
+            }
+          })
+        }
+      }
+      return { ok: true, status: 200, json: async () => ({ data: {} }) }
+    })
+
+    await run()
+
+    const updateCall = fetchMock.mock.calls.find((call) => {
+      return call[0].includes('/tasks/888888') && call[1]?.method === 'PUT'
+    })
+    expect(updateCall).toBeDefined()
+    expect(updateCall?.[1]?.body).toContain('"completed":true')
+    expect(core.setOutput).toHaveBeenCalledWith('result', 'updated')
+
+    githubContext.payload.action = 'opened'
+    githubContext.payload.pull_request.state = 'open'
+  })
+
+  it('syncs PR to Asana for pull_request_review submitted', async () => {
+    githubContext.payload.action = 'submitted'
+    useInputs({
+      action: 'pr-asana-sync',
+      'asana-workspace-id': 'workspace-1',
+      'asana-project': '111111'
+    })
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/workspaces/workspace-1/custom_fields')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              { gid: 'cf-url', name: 'Github URL' },
+              {
+                gid: 'cf-status',
+                name: 'Github Status',
+                enum_options: [
+                  { gid: 'st-open', name: 'Open' },
+                  { gid: 'st-draft', name: 'Draft' },
+                  { gid: 'st-closed', name: 'Closed' },
+                  { gid: 'st-merged', name: 'Merged' }
+                ]
+              }
+            ]
+          })
+        }
+      }
+      if (url.includes('/workspaces/workspace-1/tasks/search')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              {
+                gid: '999999',
+                permalink_url: 'https://app.asana.com/0/111111/999999/f',
+                projects: [{ gid: '111111' }]
+              }
+            ]
+          })
+        }
+      }
+      if (url.includes('/tasks/999999') && !url.includes('?opt_fields=')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              gid: '999999',
+              permalink_url: 'https://app.asana.com/0/111111/999999/f'
+            }
+          })
+        }
+      }
+      return { ok: true, status: 200, json: async () => ({ data: {} }) }
+    })
+
+    await run()
+
+    expect(core.setFailed).not.toHaveBeenCalled()
+    expect(core.setOutput).toHaveBeenCalledWith('result', 'updated')
+    expect(core.setOutput).toHaveBeenCalledWith(
+      'task-url',
+      'https://app.asana.com/0/111111/999999/f'
+    )
+    expect(core.setOutput).toHaveBeenCalledWith('asanaTaskId', '999999')
+
+    githubContext.payload.action = 'opened'
   })
 })

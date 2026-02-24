@@ -33,7 +33,7 @@ describe('local-action', () => {
     ])
 
     expect(output).toContain('::info::Calling action: find-asana-task-id')
-    expect(output).toContain('::set-output name=asanaTaskId::222222')
+    expect(output).toContain('::set-output name=asanaTaskId::1213329940926579')
   })
 
   const runIntegrationMatrix =
@@ -44,6 +44,7 @@ describe('local-action', () => {
     () => {
       const asanaPat = process.env.ASANA_PAT ?? ''
       const asanaProjectId = process.env.ASANA_PROJECT_ID ?? ''
+      const asanaWorkspaceId = process.env.ASANA_WORKSPACE_ID ?? ''
       const asanaSectionId = process.env.ASANA_SECTION_ID ?? ''
       const asanaTaskId = process.env.ASANA_TASK_ID ?? ''
       const asanaAssigneeId = process.env.ASANA_ASSIGNEE_ID ?? ''
@@ -62,6 +63,19 @@ describe('local-action', () => {
         action: string
         envLines: string[]
       }> = [
+        {
+          name: 'pr-asana-sync',
+          action: 'pr-asana-sync',
+          envLines: [
+            `INPUT_ASANA-PAT=${asanaPat}`,
+            `INPUT_ASANA-PROJECT=${asanaProjectId}`,
+            `INPUT_ASANA-WORKSPACE-ID=${asanaWorkspaceId}`,
+            'INPUT_USER-MAP={"author":"asana-author","reviewer":"asana-reviewer"}',
+            'INPUT_RANDOMIZED-REVIEWERS=reviewer',
+            'GITHUB_EVENT_NAME=pull_request',
+            'GITHUB_EVENT_PATH=__fixtures__/events/pull_request.json'
+          ]
+        },
         {
           name: 'create-asana-task',
           action: 'create-asana-task',

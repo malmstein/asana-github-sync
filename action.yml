@@ -78,6 +78,27 @@ inputs:
   github-pr:
     description: Pull request number
     required: false
+  github-token:
+    description: GitHub token for reviewer/assignee updates
+    required: false
+  asana-workspace-id:
+    description: Asana workspace ID for custom-field/task search
+    required: false
+  asana-in-progress-section-id:
+    description: Asana section ID used when review changes are requested
+    required: false
+  user-map:
+    description: JSON mapping from GitHub username to Asana user ID
+    required: false
+  randomized-reviewers:
+    description: Comma-separated GitHub users eligible as fallback reviewer
+    required: false
+  no-autoclose-projects:
+    description: Comma-separated Asana project IDs excluded from auto-close
+    required: false
+  skipped-users:
+    description: Comma-separated GitHub usernames to skip for PR sync
+    required: false
   mattermost-url:
     description: Mattermost server base URL
     required: false
@@ -108,6 +129,10 @@ outputs:
     description: Whether any Asana task IDs were found for the action
   asanaTaskPermalink:
     description: Asana permalink URL for provided task ID
+  task-url:
+    description: Asana URL for the PR sync task
+  result:
+    description: Result of PR sync action (created, updated, skipped)
 
 runs:
   using: node24

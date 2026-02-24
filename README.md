@@ -26,6 +26,7 @@ Required. Action to run:
 - `add-asana-comment`
 - `notify-pr-approved`
 - `notify-pr-merged`
+- `pr-asana-sync`
 - `add-task-asana-project`
 - `add-task-pr-description`
 - `send-mattermost-message`
@@ -220,6 +221,56 @@ Optional inputs:
 - `asana-project`
 - `is-complete`
 
+### PR Asana sync
+
+Action: `pr-asana-sync`
+
+Creates or updates an Asana PR review task linked to the current pull request,
+syncing PR title/body/state, and emitting task URL/result outputs.
+
+Required inputs:
+
+- `asana-pat`
+- `asana-workspace-id`
+- `asana-project`
+
+Optional inputs:
+
+- `github-token` (required only for randomized reviewer assignment)
+- `user-map` (JSON map: GitHub login -> Asana user GID)
+- `randomized-reviewers`
+- `asana-in-progress-section-id`
+- `no-autoclose-projects`
+- `skipped-users`
+
+#### Workflow trigger example
+
+```yaml
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - closed
+      - reopened
+      - synchronize
+      - assigned
+      - ready_for_review
+      - labeled
+
+jobs:
+  sync-pr-asana:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: <owner>/asana-github-sync@v1
+        with:
+          action: pr-asana-sync
+          asana-pat: ${{ secrets.ASANA_ACCESS_TOKEN }}
+          asana-workspace-id: ${{ secrets.ASANA_WORKSPACE_ID }}
+          asana-project: ${{ vars.ASANA_PR_PROJECT_ID }}
+          user-map: ${{ vars.ASANA_USER_MAP_JSON }}
+```
+
 ### Add task(s) to Asana project/section
 
 Action: `add-task-asana-project`
@@ -267,4 +318,7 @@ Optional inputs:
 - `duplicate`
 - `asanaTaskId`
 - `asanaTaskIds`
+- `asanaTaskFound`
 - `asanaTaskPermalink`
+- `task-url`
+- `result`

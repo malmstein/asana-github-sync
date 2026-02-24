@@ -1,5 +1,11 @@
 {
-  "action": "opened",
+  "action": "submitted",
+  "review": {
+    "state": "approved",
+    "user": {
+      "login": "reviewer"
+    }
+  },
   "pull_request": {
     "number": 7732,
     "title": "Feature: Sync Asana PR task",

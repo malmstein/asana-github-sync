@@ -6,11 +6,32 @@ type AsanaTask = {
   gid: string
   name?: string
   permalink_url?: string
+  notes?: string
+  html_notes?: string
+  completed?: boolean
+  assignee?: { gid?: string; name?: string } | null
+  due_on?: string | null
+  approval_status?: string
+  custom_fields?: Array<{
+    gid: string
+    name?: string
+    display_value?: string
+    enum_options?: Array<{ gid: string; name: string }>
+  }>
   projects?: Array<{ gid: string }>
 }
 
 type AsanaTaskCollectionResponse = { data?: AsanaTask[] }
 type AsanaTaskResponse = { data?: AsanaTask }
+type AsanaCustomField = {
+  gid: string
+  name: string
+  enum_options?: Array<{ gid: string; name: string }>
+}
+type AsanaCustomFieldCollectionResponse = {
+  data?: AsanaCustomField[]
+  next_page?: { offset?: string | null } | null
+}
 
 type AsanaTasksApi = {
   createTask: (body: unknown, opts: unknown) => Promise<AsanaTaskResponse>
@@ -25,10 +46,20 @@ type AsanaTasksApi = {
   ) => Promise<AsanaTaskResponse>
   updateTask: (body: unknown, taskId: string, opts: unknown) => Promise<unknown>
   getTasksForSection: (
-    sectionId: string
+    sectionId: string,
+    optFields?: string
   ) => Promise<AsanaTaskCollectionResponse>
   getTasksForProject: (
-    projectId: string
+    projectId: string,
+    optFields?: string
+  ) => Promise<AsanaTaskCollectionResponse>
+  searchTasksInWorkspace: (
+    workspaceId: string,
+    query: Record<string, string>
+  ) => Promise<AsanaTaskCollectionResponse>
+  getSubtasksForTask: (
+    taskId: string,
+    optFields?: string
   ) => Promise<AsanaTaskCollectionResponse>
 }
 
@@ -43,6 +74,14 @@ type AsanaStoriesApi = {
 type AsanaClient = {
   tasks: AsanaTasksApi
   stories: AsanaStoriesApi
+  customFields: {
+    getCustomFieldsForWorkspace: (
+      workspaceId: string
+    ) => Promise<AsanaCustomFieldCollectionResponse>
+  }
+  sections: {
+    addTaskForSection: (sectionId: string, taskId: string) => Promise<unknown>
+  }
 }
 
 function buildAsanaClient(): AsanaClient {
@@ -117,18 +156,48 @@ function buildAsanaClient(): AsanaClient {
         return request('PUT', `/tasks/${encodeURIComponent(taskId)}`, body)
       },
       getTasksForSection: async (
-        sectionId: string
-      ): Promise<AsanaTaskCollectionResponse> =>
-        (await request(
+        sectionId: string,
+        optFields?: string
+      ): Promise<AsanaTaskCollectionResponse> => {
+        const query = optFields
+          ? `?opt_fields=${encodeURIComponent(optFields)}`
+          : ''
+        return (await request(
           'GET',
-          `/sections/${encodeURIComponent(sectionId)}/tasks`
-        )) as AsanaTaskCollectionResponse,
+          `/sections/${encodeURIComponent(sectionId)}/tasks${query}`
+        )) as AsanaTaskCollectionResponse
+      },
       getTasksForProject: async (
-        projectId: string
+        projectId: string,
+        optFields?: string
+      ): Promise<AsanaTaskCollectionResponse> => {
+        const query = optFields
+          ? `?opt_fields=${encodeURIComponent(optFields)}`
+          : ''
+        return (await request(
+          'GET',
+          `/projects/${encodeURIComponent(projectId)}/tasks${query}`
+        )) as AsanaTaskCollectionResponse
+      },
+      searchTasksInWorkspace: async (
+        workspaceId: string,
+        query: Record<string, string>
+      ): Promise<AsanaTaskCollectionResponse> => {
+        const params = new URLSearchParams(query).toString()
+        return (await request(
+          'GET',
+          `/workspaces/${encodeURIComponent(workspaceId)}/tasks/search?${params}`
+        )) as AsanaTaskCollectionResponse
+      },
+      getSubtasksForTask: async (
+        taskId: string,
+        optFields = 'name,completed,assignee,custom_fields,permalink_url'
       ): Promise<AsanaTaskCollectionResponse> =>
         (await request(
           'GET',
-          `/projects/${encodeURIComponent(projectId)}/tasks`
+          `/tasks/${encodeURIComponent(taskId)}/subtasks?opt_fields=${encodeURIComponent(
+            optFields
+          )}`
         )) as AsanaTaskCollectionResponse
     },
     stories: {
@@ -144,6 +213,38 @@ function buildAsanaClient(): AsanaClient {
           body
         )
       }
+    },
+    customFields: {
+      getCustomFieldsForWorkspace: async (
+        workspaceId: string
+      ): Promise<AsanaCustomFieldCollectionResponse> => {
+        const fields: AsanaCustomField[] = []
+        let offset: string | null | undefined
+
+        do {
+          const query = new URLSearchParams({
+            limit: '100'
+          })
+          if (offset) query.set('offset', offset)
+          const page = (await request(
+            'GET',
+            `/workspaces/${encodeURIComponent(workspaceId)}/custom_fields?${query.toString()}`
+          )) as AsanaCustomFieldCollectionResponse
+          fields.push(...(page.data ?? []))
+          offset = page.next_page?.offset
+        } while (offset)
+
+        return { data: fields }
+      }
+    },
+    sections: {
+      addTaskForSection: async (
+        sectionId: string,
+        taskId: string
+      ): Promise<unknown> =>
+        request('POST', `/sections/${encodeURIComponent(sectionId)}/addTask`, {
+          data: { task: taskId }
+        })
     }
   }
 }
@@ -214,6 +315,380 @@ function getPullRequestBody(): string {
     )
   }
   return pullRequest.body
+}
+
+type PrState = 'Open' | 'Closed' | 'Merged' | 'Draft'
+
+type PrUser = {
+  login: string
+}
+
+type PrPayload = {
+  action?: string
+  pull_request?: {
+    number?: number
+    html_url?: string
+    title?: string
+    body?: string
+    state?: string
+    merged?: boolean
+    draft?: boolean
+    user?: PrUser
+    assignee?: PrUser | null
+    assignees?: PrUser[]
+    requested_reviewers?: PrUser[]
+    head?: { ref?: string }
+  }
+}
+
+type PrSyncCustomFields = {
+  url: AsanaCustomField
+  status: AsanaCustomField
+}
+
+const PR_SYNC_CUSTOM_FIELDS = {
+  url: 'Github URL',
+  status: 'Github Status'
+} as const
+
+const PR_SYNC_PULL_REQUEST_ACTIONS = new Set([
+  'opened',
+  'edited',
+  'closed',
+  'reopened',
+  'synchronize',
+  'assigned',
+  'ready_for_review',
+  'labeled',
+  'submitted',
+  'dismissed'
+])
+
+function getDueOn(workingDays: number): string {
+  if (workingDays < 0) {
+    throw new Error('getDueOn is not supported for past dates')
+  }
+
+  let date = new Date()
+  const weekends = Math.floor(workingDays / 5)
+  const dueOnDay = date.getDay() + weekends * 2 + workingDays
+  const additionalDays = weekends * 2 + ((dueOnDay % 7) % 6 === 0 ? 2 : 0)
+
+  date.setDate(date.getDate() + workingDays + additionalDays)
+  const offset = date.getTimezoneOffset()
+  date = new Date(date.getTime() - offset * 60 * 1000)
+  return date.toISOString().split('T')[0]
+}
+
+function parseUserMapInput(): Record<string, string> {
+  const raw = core.getInput('user-map')
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('user-map must be a JSON object')
+    }
+    const output: Record<string, string> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'string' && value.trim() !== '') {
+        output[key] = value
+      }
+    }
+    return output
+  } catch {
+    throw new Error('Invalid JSON in input user-map')
+  }
+}
+
+function getPrState(pr: NonNullable<PrPayload['pull_request']>): PrState {
+  if (pr.merged) return 'Merged'
+  if (pr.state === 'open') {
+    if (pr.draft) return 'Draft'
+    return 'Open'
+  }
+  return 'Closed'
+}
+
+function getParentTaskIdFromPrBody(body: string): string | null {
+  for (const line of body.split('\n')) {
+    const phraseIndex = line.indexOf('Task/Issue URL:')
+    if (phraseIndex < 0) continue
+    const refs = extractAsanaTaskRefs(line.slice(phraseIndex + 15))
+    if (refs.length > 0) return refs[0].taskId
+  }
+  return null
+}
+
+async function findPrSyncCustomFields(
+  client: AsanaClient,
+  workspaceId: string
+): Promise<PrSyncCustomFields> {
+  const response =
+    await client.customFields.getCustomFieldsForWorkspace(workspaceId)
+  const fields = response.data ?? []
+  const url = fields.find((field) => field.name === PR_SYNC_CUSTOM_FIELDS.url)
+  const status = fields.find(
+    (field) => field.name === PR_SYNC_CUSTOM_FIELDS.status
+  )
+  if (!url || !status) {
+    throw new Error(
+      `Custom fields "${PR_SYNC_CUSTOM_FIELDS.url}" and "${PR_SYNC_CUSTOM_FIELDS.status}" are required`
+    )
+  }
+  return { url, status }
+}
+
+async function findPrTask(
+  client: AsanaClient,
+  workspaceId: string,
+  projectId: string,
+  prUrl: string,
+  customFields: PrSyncCustomFields
+): Promise<AsanaTask | null> {
+  const search = await client.tasks.searchTasksInWorkspace(workspaceId, {
+    [`custom_fields.${customFields.url.gid}.value`]: prUrl,
+    opt_fields: 'name,permalink_url,completed,projects,custom_fields'
+  })
+  const searchedTasks = Array.isArray(search.data) ? search.data : []
+  const searchedTask = searchedTasks[0]
+  if (searchedTask) return searchedTask
+
+  const projectTasks = await client.tasks.getTasksForProject(
+    projectId,
+    'name,permalink_url,completed,projects,custom_fields'
+  )
+  const projectTaskList = Array.isArray(projectTasks.data)
+    ? projectTasks.data
+    : []
+  for (const task of projectTaskList) {
+    for (const field of task.custom_fields ?? []) {
+      if (field.gid === customFields.url.gid && field.display_value === prUrl) {
+        return task
+      }
+    }
+  }
+  return null
+}
+
+function findFirstReviewLogin(
+  pr: NonNullable<PrPayload['pull_request']>
+): string | undefined {
+  const author = pr.user?.login
+  const assignee = (pr.assignees ?? []).find((user) => user.login !== author)
+  if (assignee) return assignee.login
+  const requested = (pr.requested_reviewers ?? []).find(
+    (user) => user.login !== author
+  )
+  if (requested) return requested.login
+  return undefined
+}
+
+function buildPrTaskName(pr: NonNullable<PrPayload['pull_request']>): string {
+  const number = typeof pr.number === 'number' ? pr.number : 0
+  const title = ensureString(pr.title, 'Pull request title is required')
+  return `Code review for PR #${number}: ${title}`
+}
+
+function buildPrTaskNotes(pr: NonNullable<PrPayload['pull_request']>): string {
+  const prUrl = ensureString(pr.html_url, 'Pull request URL is required')
+  const body =
+    typeof pr.body === 'string' && pr.body.trim() !== ''
+      ? pr.body
+      : 'Empty description'
+  const truncatedBody = (
+    body.length > 5000 ? `${body.slice(0, 5000)}...` : body
+  ).replace(/^---$[\s\S]*/gm, '')
+  return `PR: ${prUrl}\n\n${truncatedBody}`
+}
+
+async function maybeAssignRandomReviewer(
+  pr: NonNullable<PrPayload['pull_request']>,
+  reviewerPool: string[]
+): Promise<string | undefined> {
+  const author = pr.user?.login ?? ''
+  const candidates = reviewerPool.filter(
+    (reviewer) => reviewer.trim() !== '' && reviewer.trim() !== author
+  )
+  if (candidates.length === 0) return undefined
+
+  const reviewer =
+    candidates[Math.floor(Math.random() * candidates.length)]?.trim()
+  if (!reviewer) return undefined
+
+  const token = core.getInput('github-token')
+  if (!token) return undefined
+
+  const owner = github.context.repo.owner
+  const repo = github.context.repo.repo
+  const pullNumber = pr.number
+  if (!owner || !repo || typeof pullNumber !== 'number') return undefined
+
+  const githubClient = buildGithubClient(token)
+  await githubClient.request(
+    'POST /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers',
+    {
+      owner,
+      repo,
+      pull_number: pullNumber,
+      reviewers: [reviewer],
+      headers: { 'X-GitHub-Api-Version': '2022-11-28' }
+    }
+  )
+  await githubClient.request(
+    'POST /repos/{owner}/{repo}/issues/{issue_number}/assignees',
+    {
+      owner,
+      repo,
+      issue_number: pullNumber,
+      assignees: [reviewer],
+      headers: { 'X-GitHub-Api-Version': '2022-11-28' }
+    }
+  )
+  core.info(`PR is assigned to randomized reviewer: ${reviewer}`)
+  return reviewer
+}
+
+async function resolvePrAssigneeLogin(
+  pr: NonNullable<PrPayload['pull_request']>,
+  reviewerPool: string[]
+): Promise<string | undefined> {
+  const existing = findFirstReviewLogin(pr)
+  if (existing) return existing
+  return maybeAssignRandomReviewer(pr, reviewerPool)
+}
+
+function shouldSkipPrSync(
+  author: string,
+  userMap: Record<string, string>
+): boolean {
+  const skippedUsers = new Set(
+    getArrayFromInput(core.getInput('skipped-users'))
+  )
+  if (skippedUsers.has(author)) return true
+  if (Object.keys(userMap).length > 0 && !userMap[author]) return true
+  return false
+}
+
+function shouldClosePrTask(
+  state: PrState,
+  task: AsanaTask,
+  noAutocloseProjects: Set<string>
+): boolean {
+  if (!['Closed', 'Merged'].includes(state)) return false
+  if (noAutocloseProjects.size === 0) return true
+  return !(task.projects ?? []).some((project) =>
+    noAutocloseProjects.has(project.gid)
+  )
+}
+
+async function prAsanaSync(): Promise<void> {
+  const payload = github.context.payload as PrPayload
+  const action = payload.action ?? ''
+  if (!PR_SYNC_PULL_REQUEST_ACTIONS.has(action)) {
+    core.info(`Skipping pr-asana-sync for pull_request action "${action}"`)
+    core.setOutput('result', 'skipped')
+    return
+  }
+
+  const pr = payload.pull_request
+  if (!pr) throw new Error('Pull request payload is required for pr-asana-sync')
+
+  const workspaceId = core.getInput('asana-workspace-id', { required: true })
+  const projectId = core.getInput('asana-project', { required: true })
+  const client = buildAsanaClient()
+  const customFields = await findPrSyncCustomFields(client, workspaceId)
+  const prUrl = ensureString(pr.html_url, 'Pull request URL is required')
+  const prState = getPrState(pr)
+  const statusGid =
+    customFields.status.enum_options?.find((opt) => opt.name === prState)
+      ?.gid ?? ''
+  if (!statusGid) {
+    throw new Error(`No enum option found for Github Status "${prState}"`)
+  }
+
+  const userMap = parseUserMapInput()
+  const author = ensureString(pr.user?.login, 'Pull request author is required')
+  if (shouldSkipPrSync(author, userMap)) {
+    core.info(`Skipping Asana sync for pull request author: ${author}`)
+    core.setOutput('result', 'skipped')
+    core.setOutput('task-url', '')
+    return
+  }
+
+  const title = buildPrTaskName(pr)
+  const notes = buildPrTaskNotes(pr)
+  const followers = userMap[author] ? [userMap[author]] : undefined
+  const parentTaskId = getParentTaskIdFromPrBody(pr.body ?? '')
+
+  let task = await findPrTask(
+    client,
+    workspaceId,
+    projectId,
+    prUrl,
+    customFields
+  )
+  if (!task) {
+    const createData: Record<string, unknown> = {
+      resource_subtype: 'approval',
+      custom_fields: {
+        [customFields.url.gid]: prUrl,
+        [customFields.status.gid]: statusGid
+      },
+      name: title,
+      notes,
+      projects: [projectId]
+    }
+    if (parentTaskId) createData.parent = parentTaskId
+    if (followers && followers.length > 0) createData.followers = followers
+    if (!pr.draft) createData.due_on = getDueOn(1)
+
+    const created = await client.tasks.createTask({ data: createData }, {})
+    const taskId = ensureString(
+      created.data?.gid,
+      'Failed to create PR Asana task'
+    )
+    task = created.data ?? { gid: taskId }
+    core.setOutput('result', 'created')
+  } else {
+    core.setOutput('result', 'updated')
+  }
+
+  const reviewerPool = getArrayFromInput(core.getInput('randomized-reviewers'))
+  const assigneeLogin = await resolvePrAssigneeLogin(pr, reviewerPool)
+  const assignee = assigneeLogin ? userMap[assigneeLogin] : undefined
+
+  const updateData: Record<string, unknown> = {
+    custom_fields: {
+      [customFields.url.gid]: prUrl,
+      [customFields.status.gid]: statusGid
+    },
+    name: title,
+    notes
+  }
+  if (assignee) updateData.assignee = assignee
+  if (action === 'ready_for_review') {
+    updateData.due_on = getDueOn(1)
+  }
+
+  const noAutocloseProjects = new Set(
+    getArrayFromInput(core.getInput('no-autoclose-projects'))
+  )
+  if (shouldClosePrTask(prState, task, noAutocloseProjects)) {
+    updateData.completed = true
+  }
+
+  const sectionId = core.getInput('asana-in-progress-section-id')
+  if (sectionId && ['assigned', 'ready_for_review'].includes(action)) {
+    await client.sections.addTaskForSection(sectionId, task.gid)
+  }
+
+  await client.tasks.updateTask({ data: updateData }, task.gid, {})
+  const refreshedTask = await client.tasks.getTask(task.gid)
+  core.setOutput(
+    'task-url',
+    refreshedTask.data?.permalink_url ?? task.permalink_url ?? ''
+  )
+  core.setOutput('asanaTaskId', task.gid)
 }
 
 async function isTaskInProject(
@@ -684,6 +1159,9 @@ export async function run(): Promise<void> {
         break
       case 'notify-pr-merged':
         await completePRTask()
+        break
+      case 'pr-asana-sync':
+        await prAsanaSync()
         break
       case 'add-task-asana-project':
         await addTaskToAsanaProject()
